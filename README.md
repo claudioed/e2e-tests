@@ -8,12 +8,12 @@ their published REST APIs with a [godog](https://github.com/cucumber/godog)
 (Cucumber for Go) suite. It never imports another repo's Go packages —
 exactly like a human running curl against a live deployment.
 
-This repo is a study-project companion to five bounded-context repos
+This repo is a study-project companion to six bounded-context repos
 (`facility-layout`, `inventory-storage`, `wes-work-planning`,
-`fulfillment-execution`, `workforce-management`) plus the read-side
-decision-support agent `warehouse-ops-agent`, all siblings under the same
-`warehouse-systems/` workspace root — see `env.sh`'s `REPOS_ROOT` for the
-layout this harness assumes.
+`fulfillment-execution`, `workforce-management`, `order-management`) plus
+the read-side decision-support agent `warehouse-ops-agent`, all siblings
+under the same `warehouse-systems/` workspace root — see `env.sh`'s
+`REPOS_ROOT` for the layout this harness assumes.
 
 ## What's covered
 
@@ -32,19 +32,34 @@ layout this harness assumes.
   the expected `FlowBalanceException` (E1) — a ranked recommendation with a
   full evidence trail — and surface the same exception in its daily brief
   (E3).
+- **`features/order_management_choreographed_release.feature`** — proves
+  order-management's choreographed-release redesign end-to-end: placing an
+  order (`POST /orders`) with `allowPartialShipment=false` and lines that
+  can be immediately allocated triggers, in the SAME call, synchronous
+  allocation against inventory-storage (unchanged HTTP) followed by
+  publishing `OrderAllocated`/`OrderPartiallyAllocated` to Kafka topic
+  `warehouse.order-management.events` — which wes-work-planning's 4th
+  consumer subscription (`handleOrderManagementEvent`) picks up and turns
+  into a real work unit via its existing `EnqueueWorkUnit` use case, using
+  the deterministic id `{order_id}-line-{line_no}`. This is order-
+  management's only public REST surface in v1 (`POST /orders`,
+  `GET /orders/{id}`, `POST /orders/{id}/retry-allocation`,
+  `DELETE /orders/{id}`, `GET /healthz`) — there is no `/allocate` or
+  `/release` endpoint anymore; release happens implicitly, choreographed
+  over Kafka.
 
 ## Running locally
 
 Prerequisites: Docker (for Postgres + the shared Kafka broker), Go
-(matching `go.mod`), and all six sibling repos checked out alongside this
+(matching `go.mod`), and all seven sibling repos checked out alongside this
 one under the same parent directory.
 
 ```bash
 cd e2e-tests
 bash scripts/02-up-infra.sh      # Postgres (this repo) + shared Kafka
 bash scripts/02b-migrate-wes.sh  # wes-work-planning has no self-migrate step
-bash scripts/01-build.sh         # builds all 11 binaries (5 HTTP + 5 MCP + ops-agent)
-bash scripts/03-up-services.sh   # starts all 11 as background processes
+bash scripts/01-build.sh         # builds all 12 binaries (6 HTTP + 5 MCP + ops-agent)
+bash scripts/03-up-services.sh   # starts all 12 as background processes
 bash scripts/04-run-tests.sh     # runs the godog suite against the live services
 bash scripts/05-down-services.sh # stops only what this harness started
 ```
@@ -70,13 +85,17 @@ bearer key `scripts/*.sh` uses — edit ports there only.
   `start_service_in` with their CWD set to that repo's root; every other
   service reads `MIGRATIONS_PATH` from the environment and runs fine from
   this harness's own CWD.
+- `order-management` self-migrates on startup (same as facility-layout,
+  inventory-storage, fulfillment-execution, and workforce-management) via
+  `postgres.RunMigrations` inside its own `main()` — no separate migrate
+  script is needed for it, unlike wes-work-planning (`02b-migrate-wes.sh`).
 
 ## CI
 
 `.github/workflows/ci.yml` runs `gofmt`, `go build`/`go vet`, a shell
 syntax check on every `scripts/*.sh`, and `docker compose config`
 validation. The full godog suite is NOT run in CI: it is a genuinely
-multi-repo black-box harness (it builds and runs binaries from five
+multi-repo black-box harness (it builds and runs binaries from six
 sibling repos plus `warehouse-ops-agent`, none of which are checked out in
 a single-repo GitHub Actions run) — it is run and verified locally as part
 of every change that touches it, the same pattern `e2s-tests`' equivalent

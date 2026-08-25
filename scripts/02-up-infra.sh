@@ -23,9 +23,9 @@ wait_for_tcp localhost 9092 30
 log "starting per-service Postgres instances (docker compose, project warehouse-e2e)"
 docker compose -f "${WORKSPACE_ROOT}/docker-compose.yml" up -d
 
-log "waiting for all 5 Postgres instances to report healthy"
+log "waiting for all 6 Postgres instances to report healthy"
 deadline=$((SECONDS + 60))
-for svc in postgres-facility postgres-inventory postgres-wes postgres-fulfillment postgres-workforce; do
+for svc in postgres-facility postgres-inventory postgres-wes postgres-fulfillment postgres-workforce postgres-order; do
   while true; do
     status="$(docker inspect -f '{{.State.Health.Status}}' "e2e-${svc}" 2>/dev/null || echo starting)"
     if [[ "${status}" == "healthy" ]]; then
@@ -39,4 +39,4 @@ for svc in postgres-facility postgres-inventory postgres-wes postgres-fulfillmen
   done
 done
 
-log "infra up: Kafka on :9092, Postgres on :5441-:5445"
+log "infra up: Kafka on :9092, Postgres on :5441-:5446"

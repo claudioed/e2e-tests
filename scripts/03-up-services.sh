@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 # e2e-tests/scripts/03-up-services.sh
 #
-# Starts all 5 bounded-context HTTP services as background processes
+# Starts all 6 bounded-context HTTP services as background processes
 # against Postgres + Kafka, in dependency order:
 #   1. facility-layout   — no deps (Open Host Service for the warehouse map)
 #   2. inventory-storage — calls facility-layout over HTTP for hazmat/
 #                           temperature placement checks (LOCATION_LOOKUP_MODE=http)
 #   3. wes-work-planning — calls inventory-storage over HTTP for product
 #                           classification (PRODUCT_CLASSIFICATION_MODE=http),
-#                           consumes workforce/inventory/fulfillment Kafka topics
+#                           consumes workforce/inventory/fulfillment/order-management Kafka topics
 #   4. fulfillment-execution — consumes WorkReleased from wes-work-planning's
 #                           Kafka topic, calls inventory-storage over HTTP for
 #                           DOT hazard segregation, publishes TaskCompleted
 #   5. workforce-management — publishes ShiftPlanCommitted to Kafka, which
 #                           wes-work-planning's labor-plan-view projects
+#   6. order-management  — calls inventory-storage over HTTP (synchronous
+#                           allocation), then publishes OrderAllocated /
+#                           OrderPartiallyAllocated to Kafka, which
+#                           wes-work-planning's 4th consumer subscription
+#                           turns into a work unit via EnqueueWorkUnit —
+#                           the choreographed-release path this repo's new
+#                           order_management_choreographed_release.feature
+#                           proves end-to-end.
 #
-# All five run with EVENT_PUBLISHER=kafka against the shared broker so the
+# All six run with EVENT_PUBLISHER=kafka against the shared broker so the
 # cross-context event flow (WorkReleased -> Task, TaskCompleted -> WorkUnit
-# completion, ShiftPlanCommitted -> labor-plan-view) is exercised for real,
-# not just each service in isolation.
+# completion, ShiftPlanCommitted -> labor-plan-view, OrderAllocated/
+# OrderPartiallyAllocated -> WorkUnit) is exercised for real, not just each
+# service in isolation.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
@@ -80,12 +89,35 @@ start_service workforce "${BIN_DIR}/workforce" \
   LOG_LEVEL=info
 wait_for_http "${WORKFORCE_BASE_URL}/healthz"
 
-log "all 5 services up and healthy"
+log "starting order-management on ${ORDER_BASE_URL}"
+# order-management (6th bounded context): the choreographed-release
+# redesign. It calls inventory-storage over HTTP (synchronous allocation,
+# unchanged) and — instead of also calling wes-work-planning's HTTP API —
+# publishes OrderAllocated/OrderPartiallyAllocated to Kafka topic
+# warehouse.order-management.events, which wes-work-planning's 4th
+# consumer subscription (already started above) picks up and turns into a
+# work unit via its existing EnqueueWorkUnit use case. No
+# WES_WORK_PLANNING_BASE_URL/WES_WORK_PLANNING_MODE is set here: this
+# service's HTTP release path (POST /paths/{pathId}/work-units) is no
+# longer part of its choreographed flow at all.
+start_service order "${BIN_DIR}/order" \
+  HTTP_ADDR=":${ORDER_HTTP_PORT}" \
+  DATABASE_URL="${ORDER_DB_URL}" \
+  MIGRATIONS_PATH="${ORDER_REPO}/migrations" \
+  EVENT_PUBLISHER=kafka \
+  KAFKA_BROKERS="${KAFKA_BROKERS}" \
+  INVENTORY_STORAGE_MODE=http \
+  INVENTORY_STORAGE_BASE_URL="${INVENTORY_BASE_URL}" \
+  LOG_LEVEL=info
+wait_for_http "${ORDER_BASE_URL}/healthz"
+
+log "all 6 services up and healthy"
 printf '  %-24s %s\n' facility-layout        "${FACILITY_BASE_URL}"
 printf '  %-24s %s\n' inventory-storage      "${INVENTORY_BASE_URL}"
 printf '  %-24s %s\n' wes-work-planning      "${WES_BASE_URL}"
 printf '  %-24s %s\n' fulfillment-execution  "${FULFILLMENT_BASE_URL}"
 printf '  %-24s %s\n' workforce-management   "${WORKFORCE_BASE_URL}"
+printf '  %-24s %s\n' order-management       "${ORDER_BASE_URL}"
 
 # --- MCP servers (cmd/mcp), one per context, pointed at the SAME
 # Postgres each HTTP service above just started against — so a fact an
