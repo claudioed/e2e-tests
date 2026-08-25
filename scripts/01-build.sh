@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
-log "building 5 service binaries into ${BIN_DIR}"
+log "building 6 service binaries into ${BIN_DIR}"
 
 build_one() {
   local name="$1" repo="$2" cmd_pkg="$3"
@@ -25,6 +25,9 @@ build_one inventory    "${INVENTORY_REPO}"    inventory
 build_one wes          "${WES_REPO}"          wes
 build_one execution    "${FULFILLMENT_REPO}"  execution
 build_one workforce    "${WORKFORCE_REPO}"    workforce
+# order-management (6th bounded context): cmd/order is its HTTP binary
+# package, same cmd/<name> convention as the other five services above.
+build_one order        "${ORDER_REPO}"        order
 
 log "building 5 MCP server binaries into ${BIN_DIR} (cmd/mcp — the agentic see-layer)"
 build_one facility-mcp     "${FACILITY_REPO}"     mcp
@@ -36,5 +39,5 @@ build_one workforce-mcp    "${WORKFORCE_REPO}"    mcp
 log "building warehouse-ops-agent (cmd/agent — the agentic analyze/act layer, T5)"
 build_one ops-agent "${OPS_AGENT_REPO}" agent
 
-log "all 11 binaries built"
+log "all 12 binaries built"
 ls -la "${BIN_DIR}"

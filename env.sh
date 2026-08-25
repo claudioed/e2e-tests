@@ -12,6 +12,7 @@ WES_REPO="${REPOS_ROOT}/wes-work-planning"
 FULFILLMENT_REPO="${REPOS_ROOT}/fulfillment-execution"
 WORKFORCE_REPO="${REPOS_ROOT}/workforce-management"
 OPS_AGENT_REPO="${REPOS_ROOT}/warehouse-ops-agent"
+ORDER_REPO="${REPOS_ROOT}/order-management"
 
 BIN_DIR="${WORKSPACE_ROOT}/bin"
 LOG_DIR="${WORKSPACE_ROOT}/logs"
@@ -24,12 +25,17 @@ INVENTORY_HTTP_PORT=8082
 WES_HTTP_PORT=8083
 FULFILLMENT_HTTP_PORT=8084
 WORKFORCE_HTTP_PORT=8085
+# order-management (6th bounded context, choreographed-release redesign —
+# see CLAUDE.md's "Cross-service integration" section) — next free slot
+# after workforce-management's :8085.
+ORDER_HTTP_PORT=8086
 
 FACILITY_BASE_URL="http://localhost:${FACILITY_HTTP_PORT}"
 INVENTORY_BASE_URL="http://localhost:${INVENTORY_HTTP_PORT}"
 WES_BASE_URL="http://localhost:${WES_HTTP_PORT}"
 FULFILLMENT_BASE_URL="http://localhost:${FULFILLMENT_HTTP_PORT}"
 WORKFORCE_BASE_URL="http://localhost:${WORKFORCE_HTTP_PORT}"
+ORDER_BASE_URL="http://localhost:${ORDER_HTTP_PORT}"
 
 # ---- MCP ports (each context's Streamable-HTTP MCP server, cmd/mcp,
 #      alongside its HTTP service above) ----------------------------
@@ -74,6 +80,12 @@ INVENTORY_DB_URL="postgres://inventory:inventory@localhost:5442/inventory?sslmod
 WES_DB_URL="postgres://wes:wes@localhost:5443/wes?sslmode=disable"
 FULFILLMENT_DB_URL="postgres://fulfillment:fulfillment@localhost:5444/fulfillment_execution?sslmode=disable"
 WORKFORCE_DB_URL="postgres://workforce:workforce@localhost:5445/workforce?sslmode=disable"
+# order-management's own docker-compose.yml defaults to host port 5434 —
+# this harness's own e2e-specific offset continues past workforce's :5445
+# (avoiding both the 5441-5445 range already in use here AND order-
+# management's own :5434 default, per this file's own port-offset
+# convention documented in docker-compose.yml's header comment).
+ORDER_DB_URL="postgres://order:order@localhost:5446/order?sslmode=disable"
 
 # ---- Kafka: shared broker from ~/warehouse-systems/docker-compose.kafka.yml
 KAFKA_BROKERS="localhost:9092"

@@ -43,9 +43,10 @@ var (
 	fulfillmentBaseURL  = envOrDefault("FULFILLMENT_BASE_URL", "http://localhost:8084")
 	workforceBaseURL    = envOrDefault("WORKFORCE_BASE_URL", "http://localhost:8085")
 	opsAgentBaseURL     = envOrDefault("OPS_AGENT_BASE_URL", "http://localhost:8096")
-	inventoryDBURL      = envOrDefault("INVENTORY_DB_URL", "postgres://inventory:inventory@localhost:5442/inventory?sslmode=disable")
-	wesDBURL            = envOrDefault("WES_DB_URL", "postgres://wes:wes@localhost:5443/wes?sslmode=disable")
-	fulfillmentDBURL    = envOrDefault("FULFILLMENT_DB_URL", "postgres://fulfillment:fulfillment@localhost:5444/fulfillment_execution?sslmode=disable")
+	orderBaseURL        = envOrDefault("ORDER_BASE_URL", "http://localhost:8086")
+	inventoryDBURL      = envOrDefault("INVENTORY_DB_URL", "postgres://inventory:***@localhost:5442/inventory?sslmode=disable")
+	wesDBURL            = envOrDefault("WES_DB_URL", "postgres://wes:***@localhost:5443/wes?sslmode=disable")
+	fulfillmentDBURL    = envOrDefault("FULFILLMENT_DB_URL", "postgres://fulfillment:***@localhost:5444/fulfillment_execution?sslmode=disable")
 	eventualWaitTimeout = 30 * time.Second
 	eventualWaitPoll    = 500 * time.Millisecond
 )
@@ -70,6 +71,7 @@ type world struct {
 	last   httpResult
 
 	claimedTaskID string
+	orderID       string
 }
 
 func newWorld() *world {
@@ -118,6 +120,7 @@ func (w *world) allServicesAreHealthy() error {
 		"wes-work-planning":     wesBaseURL,
 		"fulfillment-execution": fulfillmentBaseURL,
 		"workforce-management":  workforceBaseURL,
+		"order-management":      orderBaseURL,
 	} {
 		if err := w.doJSON(http.MethodGet, base+"/healthz", nil); err != nil {
 			return fmt.Errorf("%s not reachable: %w", name, err)
@@ -638,6 +641,113 @@ func (w *world) dailyBriefListsOpenExceptionForPath(pathID, siteCode string) err
 }
 
 // ---------------------------------------------------------------------
+// order-management steps (choreographed-release redesign)
+//
+// order-management's only public REST surface in v1: POST /orders,
+// GET /orders/{id}, POST /orders/{id}/retry-allocation, DELETE
+// /orders/{id}, GET /healthz. There is no /allocate or /release endpoint
+// — placing an order that can be immediately, fully allocated triggers
+// allocation (synchronous HTTP to inventory-storage, unchanged) AND
+// release (publishing OrderAllocated/OrderPartiallyAllocated to Kafka
+// topic warehouse.order-management.events) in the SAME POST /orders
+// call. wes-work-planning's 4th consumer subscription
+// (handleOrderManagementEvent) turns that into a real work unit via its
+// existing EnqueueWorkUnit use case, with the deterministic id
+// "{order_id}-line-{line_no}".
+// ---------------------------------------------------------------------
+
+// placeOrder issues POST /orders for a single-line order against sku with
+// the given quantity and allowPartialShipment, recording both the HTTP
+// result (for a following "the response status is 201" step) and the
+// order id (for later steps that need it, e.g. the deterministic work
+// unit id derivation below).
+func (w *world) placeOrder(sku string, quantity int, allowPartialShipment bool) error {
+	if err := w.expectOK2xx(w.doJSON(http.MethodPost, orderBaseURL+"/orders", map[string]any{
+		"lines":                []map[string]any{{"sku": sku, "quantity": quantity}},
+		"allowPartialShipment": allowPartialShipment,
+	})); err != nil {
+		return err
+	}
+	got := w.last.json()
+	id, _ := got["id"].(string)
+	if id == "" {
+		return fmt.Errorf("POST /orders response has no id (body: %s)", w.last.body)
+	}
+	w.orderID = id
+	return nil
+}
+
+// iPlaceAnOrderForUnitsOfSKU is the godog-facing step: "When I place an
+// order for N units of SKU "..." allowing ship-complete only in
+// order-management" (allowPartialShipment=false — BR3's default).
+func (w *world) iPlaceAnOrderForUnitsOfSKU(quantity int, sku string) error {
+	return w.placeOrder(sku, quantity, false)
+}
+
+// theOrderIsAllocated asserts GET /orders/{id} reports every line
+// Allocated (or further along — Released is also acceptable, since by
+// the time this assertion runs the choreographed release may already
+// have happened synchronously within the same POST /orders call).
+func (w *world) theOrderIsAllocated() error {
+	if w.orderID == "" {
+		return fmt.Errorf("no order has been placed yet this scenario")
+	}
+	if err := w.doJSON(http.MethodGet, fmt.Sprintf("%s/orders/%s", orderBaseURL, w.orderID), nil); err != nil {
+		return err
+	}
+	if w.last.status != http.StatusOK {
+		return fmt.Errorf("GET /orders/%s status = %d (body: %s)", w.orderID, w.last.status, w.last.body)
+	}
+	got := w.last.json()
+	status, _ := got["status"].(string)
+	switch status {
+	case "Allocated", "PartiallyAllocated", "Released", "PartiallyReleased":
+		return nil
+	default:
+		return fmt.Errorf("order status = %q, want Allocated (or further along) (body: %s)", status, w.last.body)
+	}
+}
+
+// wesEventuallyEnqueuesWorkUnitForOrderLine polls wes-work-planning's
+// backlog-snapshot endpoint (GET /paths/{pathId}/telemetry) for pathID
+// until its BacklogDepth is >= 1, proving order-management's Kafka-
+// published OrderAllocated/OrderPartiallyAllocated event was consumed by
+// wes-work-planning's 4th subscription and turned into a real work unit
+// via EnqueueWorkUnit — the deterministic id this proves exists is
+// "{order_id}-line-{lineNo}" (see order-management's WorkUnitID helper
+// and wes-work-planning's handleOrderManagementEvent, both frozen to
+// this exact format). lineNo is almost always 1 for the single-line
+// orders this scenario places.
+//
+// order-management's line PathID always defaults to shared.DefaultPathId
+// ("pick") in v1 — see order-management's CLAUDE.md's Ubiquitous
+// Language section — so pathID here is expected to be "pick" unless a
+// future order-management change threads a real path selection through.
+//
+// Parameter order (lineNo, pathID) matches the step regex's capture-group
+// order, consistent with every other multi-arg step in this file.
+func (w *world) wesEventuallyEnqueuesWorkUnitForOrderLine(lineNo int, pathID string) error {
+	if w.orderID == "" {
+		return fmt.Errorf("no order has been placed yet this scenario")
+	}
+	wantWorkUnitID := fmt.Sprintf("%s-line-%d", w.orderID, lineNo)
+	return eventually(func() error {
+		if err := w.doJSON(http.MethodGet, fmt.Sprintf("%s/paths/%s/telemetry", wesBaseURL, pathID), nil); err != nil {
+			return err
+		}
+		if w.last.status != http.StatusOK {
+			return fmt.Errorf("status %d (body=%s)", w.last.status, w.last.body)
+		}
+		got := w.last.json()
+		depth, _ := toFloat(got["backlogDepth"])
+		if depth < 1 {
+			return fmt.Errorf("backlogDepth = %v, want >= 1 (work unit %q not yet enqueued; body=%s)", got["backlogDepth"], wantWorkUnitID, w.last.body)
+		}
+		return nil
+	})
+}
+
+// ---------------------------------------------------------------------
 // generic assertion helpers
 // ---------------------------------------------------------------------
 
@@ -751,6 +861,11 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 
 	// generic
 	sc.Step(`^the response status is (\d+)$`, w.responseStatusIs)
+
+	// order-management (choreographed-release redesign)
+	sc.Step(`^I place an order for (\d+) units? of SKU "([^"]*)" allowing ship-complete only in order-management$`, w.iPlaceAnOrderForUnitsOfSKU)
+	sc.Step(`^the order is allocated in order-management$`, w.theOrderIsAllocated)
+	sc.Step(`^wes-work-planning eventually enqueues a work unit for the order's line (\d+) on process path "([^"]*)"$`, w.wesEventuallyEnqueuesWorkUnitForOrderLine)
 }
 
 func TestMain(m *testing.M) {
