@@ -37,11 +37,17 @@ jobs:
             exit 1
           fi
 
-      - name: Build and vet
+      - name: Vet and compile test binary
         run: |
           set -euo pipefail
-          go build ./...
+          # NOTE: this repo's only Go file is e2e_test.go (package main,
+          # *_test.go suffix). `go build ./...` reports "no packages to
+          # build" for a dir containing only _test.go files (test files
+          # aren't build targets), so `go build` is not a meaningful check
+          # here. `go vet ./...` and `go test -c` (compile without running)
+          # both do include test files and are the correct compile-check.
           go vet ./...
+          go test -c -o /dev/null ./...
 
   scripts-sanity:
     runs-on: ubuntu-latest
