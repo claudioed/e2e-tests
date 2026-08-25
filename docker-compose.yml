@@ -1,0 +1,117 @@
+####################################################################
+# e2e-tests/docker-compose.yml
+#
+# Postgres ONLY. Kafka is intentionally NOT declared here: a shared
+# broker already runs from ~/warehouse-systems/docker-compose.kafka.yml
+# (container "warehouse-kafka", host port 9092) and every service repo's
+# own README says to connect to it rather than spin up a second one.
+# scripts/02-up-infra.sh starts that compose file too if it isn't
+# already running.
+#
+# Each service gets its OWN Postgres instance, on its own host port,
+# using the SAME database name/user/password its own repo's
+# docker-compose.yml already uses (so DATABASE_URL construction is a
+# copy-paste of what each service expects). Ports are offset from the
+# services' own defaults (normally all 5432) to avoid colliding with a
+# developer's per-repo `docker compose up` left running from another
+# session.
+####################################################################
+name: warehouse-e2e
+
+services:
+  postgres-facility:
+    image: postgres:16
+    container_name: e2e-postgres-facility
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: facility
+      POSTGRES_PASSWORD: facility
+      POSTGRES_DB: facility
+    ports:
+      - "5441:5432"
+    volumes:
+      - e2e_facility_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U facility -d facility"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres-inventory:
+    image: postgres:16
+    container_name: e2e-postgres-inventory
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory
+    ports:
+      - "5442:5432"
+    volumes:
+      - e2e_inventory_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres-wes:
+    image: postgres:16
+    container_name: e2e-postgres-wes
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wes
+      POSTGRES_PASSWORD: wes
+      POSTGRES_DB: wes
+    ports:
+      - "5443:5432"
+    volumes:
+      - e2e_wes_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wes -d wes"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres-fulfillment:
+    image: postgres:16
+    container_name: e2e-postgres-fulfillment
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fulfillment
+      POSTGRES_PASSWORD: fulfillment
+      POSTGRES_DB: fulfillment_execution
+    ports:
+      - "5444:5432"
+    volumes:
+      - e2e_fulfillment_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fulfillment -d fulfillment_execution"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  postgres-workforce:
+    image: postgres:16
+    container_name: e2e-postgres-workforce
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: workforce
+      POSTGRES_PASSWORD: workforce
+      POSTGRES_DB: workforce
+    ports:
+      - "5445:5432"
+    volumes:
+      - e2e_workforce_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workforce -d workforce"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  e2e_facility_pg_data:
+  e2e_inventory_pg_data:
+  e2e_wes_pg_data:
+  e2e_fulfillment_pg_data:
+  e2e_workforce_pg_data:

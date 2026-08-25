@@ -1,0 +1,75 @@
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-and-vet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt check
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [[ -n "${unformatted}" ]]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+      - name: Build and vet
+        run: |
+          set -euo pipefail
+          go build ./...
+          go vet ./...
+
+  scripts-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Shell syntax check
+        run: |
+          set -euo pipefail
+          for f in scripts/*.sh; do
+            echo "checking ${f}"
+            bash -n "${f}"
+          done
+
+      - name: docker-compose config validation
+        run: docker compose -f docker-compose.yml config
+
+  # NOTE: this repo's e2e_test.go (the actual godog suite) is intentionally
+  # NOT run here. It is a black-box harness that drives 11 already-running
+  # binaries built from FIVE sibling bounded-context repos plus this
+  # repo's own warehouse-ops-agent build (see scripts/01-build.sh's
+  # REPOS_ROOT="${WORKSPACE_ROOT}/.." convention) against real Postgres
+  # and Kafka. A fresh single-repo GitHub Actions checkout has none of
+  # those sibling repos on disk, so the full bootstrap (scripts/01-05)
+  # cannot run here without a multi-repo checkout + docker-in-docker
+  # topology this CI does not yet provision. The suite IS run and
+  # verified locally as part of every T-card that touches it (build +
+  # vet + gofmt here catch every regression that would break compilation;
+  # the live run is the human/agent verification step before merge,
+  # exactly as it was for e2s-tests' equivalent harness).

@@ -1,0 +1,83 @@
+# warehouse-e2e (`e2e-tests`)
+
+Black-box, over-the-wire end-to-end / system test harness for the
+[warehouse-systems](https://github.com/claudioed) estate: builds and runs
+every bounded context's real HTTP service (and MCP server) as independent
+OS processes against real Postgres + Kafka, then drives them purely over
+their published REST APIs with a [godog](https://github.com/cucumber/godog)
+(Cucumber for Go) suite. It never imports another repo's Go packages —
+exactly like a human running curl against a live deployment.
+
+This repo is a study-project companion to five bounded-context repos
+(`facility-layout`, `inventory-storage`, `wes-work-planning`,
+`fulfillment-execution`, `workforce-management`) plus the read-side
+decision-support agent `warehouse-ops-agent`, all siblings under the same
+`warehouse-systems/` workspace root — see `env.sh`'s `REPOS_ROOT` for the
+layout this harness assumes.
+
+## What's covered
+
+- **`features/bootstrap.feature`** — a single work unit flowing through
+  every bounded context: facility-layout's physical map, inventory-storage
+  stock, workforce-management's committed shift plan (Kafka →
+  wes-work-planning's labor-plan-view), wes-work-planning's release (Kafka →
+  fulfillment-execution's task creation), and fulfillment-execution's task
+  completion (Kafka → wes-work-planning's completion read model).
+- **`features/flow_balance_exception.feature`** (T5) — proves
+  `warehouse-ops-agent`, the agentic read-side decision-support layer, end
+  -to-end against the real MCP servers of all five contexts: three
+  independent signals (a saturated wes-work-planning pool, a
+  workforce-management staffing gap, a stuck fulfillment-execution task) are
+  seeded for the same process path, and the agent must correlate them into
+  the expected `FlowBalanceException` (E1) — a ranked recommendation with a
+  full evidence trail — and surface the same exception in its daily brief
+  (E3).
+
+## Running locally
+
+Prerequisites: Docker (for Postgres + the shared Kafka broker), Go
+(matching `go.mod`), and all six sibling repos checked out alongside this
+one under the same parent directory.
+
+```bash
+cd e2e-tests
+bash scripts/02-up-infra.sh      # Postgres (this repo) + shared Kafka
+bash scripts/02b-migrate-wes.sh  # wes-work-planning has no self-migrate step
+bash scripts/01-build.sh         # builds all 11 binaries (5 HTTP + 5 MCP + ops-agent)
+bash scripts/03-up-services.sh   # starts all 11 as background processes
+bash scripts/04-run-tests.sh     # runs the godog suite against the live services
+bash scripts/05-down-services.sh # stops only what this harness started
+```
+
+`env.sh` is the single source of truth for every port, DB URL, and MCP
+bearer key `scripts/*.sh` uses — edit ports there only.
+
+## Service lifecycle notes
+
+- `scripts/lib.sh`'s `start_service_in`/`start_service` launch each binary
+  in the background and record its PID to `run/pids/<name>.pid`;
+  `stop_service` (`scripts/05-down-services.sh`) kills strictly by that
+  PID file — never a blind `pkill` — so re-running the harness never
+  touches an unrelated process on your machine.
+- Known pitfall (fixed): backgrounding a `cd ... && ...` list forces an
+  extra subshell fork, and on some bash builds `$!` taken right after
+  resolves to the *caller's* PID rather than the child's, so the recorded
+  PID could be wrong. `start_service_in` now backgrounds a single `( cd
+  ... && exec ... )` subshell with no nested `&&` list, so `$!` is always
+  the actual binary's PID.
+- `fulfillment-execution`'s `main()` hardcodes a relative `migrations`
+  path, so it (and its MCP server) are the only two services launched via
+  `start_service_in` with their CWD set to that repo's root; every other
+  service reads `MIGRATIONS_PATH` from the environment and runs fine from
+  this harness's own CWD.
+
+## CI
+
+`.github/workflows/ci.yml` runs `gofmt`, `go build`/`go vet`, a shell
+syntax check on every `scripts/*.sh`, and `docker compose config`
+validation. The full godog suite is NOT run in CI: it is a genuinely
+multi-repo black-box harness (it builds and runs binaries from five
+sibling repos plus `warehouse-ops-agent`, none of which are checked out in
+a single-repo GitHub Actions run) — it is run and verified locally as part
+of every change that touches it, the same pattern `e2s-tests`' equivalent
+harness follows.
