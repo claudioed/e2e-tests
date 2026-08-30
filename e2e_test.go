@@ -72,6 +72,12 @@ type world struct {
 
 	claimedTaskID string
 	orderID       string
+
+	// soak carries state across soak_backlog_ramp.feature's own three
+	// steps (seed pools -> register stations -> run ramp -> print
+	// summary) within a single scenario. Left nil by every other
+	// feature's scenarios. See soak_test.go.
+	soak *soakState
 }
 
 func newWorld() *world {
@@ -866,15 +872,31 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I place an order for (\d+) units? of SKU "([^"]*)" allowing ship-complete only in order-management$`, w.iPlaceAnOrderForUnitsOfSKU)
 	sc.Step(`^the order is allocated in order-management$`, w.theOrderIsAllocated)
 	sc.Step(`^wes-work-planning eventually enqueues a work unit for the order's line (\d+) on process path "([^"]*)"$`, w.wesEventuallyEnqueuesWorkUnitForOrderLine)
+
+	// soak backlog ramp (features/soak_backlog_ramp.feature, @soak —
+	// excluded from the default run, see TestMain's Tags option)
+	sc.Step(`^wes-work-planning has release-fed work pools for soak process paths "([^"]*)" and "([^"]*)" with the configured WIP limit$`, w.soakSeedWorkPools)
+	sc.Step(`^the configured picker and packer stations are registered in fulfillment-execution for soak$`, w.soakRegisterStations)
+	sc.Step(`^backlog is ramped into process paths "([^"]*)" and "([^"]*)" for the configured soak duration with pickers and packers continuously processing$`, w.soakRampBacklog)
+	sc.Step(`^the soak run summary is printed$`, w.soakSummaryIsPrinted)
 }
 
 func TestMain(m *testing.M) {
+	// @soak (features/soak_backlog_ramp.feature) is a long, ramping
+	// load run — potentially an hour — and must never run as part of an
+	// ordinary `go test`/scripts/04-run-tests.sh invocation. Excluded by
+	// default; scripts/06-run-soak.sh sets GODOG_TAGS=@soak to run ONLY
+	// that scenario. godog's Tags expression: "~@soak" means "not
+	// tagged @soak".
+	tags := envOrDefault("GODOG_TAGS", "~@soak")
+
 	suite := godog.TestSuite{
 		Name:                "e2e",
 		ScenarioInitializer: InitializeScenario,
 		Options: &godog.Options{
 			Format:   "pretty",
 			Paths:    []string{"features"},
+			Tags:     tags,
 			Strict:   true,
 			TestingT: nil,
 		},
