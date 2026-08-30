@@ -60,12 +60,44 @@ bash scripts/02-up-infra.sh      # Postgres (this repo) + shared Kafka
 bash scripts/02b-migrate-wes.sh  # wes-work-planning has no self-migrate step
 bash scripts/01-build.sh         # builds all 12 binaries (6 HTTP + 5 MCP + ops-agent)
 bash scripts/03-up-services.sh   # starts all 12 as background processes
-bash scripts/04-run-tests.sh     # runs the godog suite against the live services
+bash scripts/04-run-tests.sh     # runs the default godog suite (excludes @soak)
+bash scripts/06-run-soak.sh      # OPTIONAL: the long-running @soak backlog-ramp run (see below)
 bash scripts/05-down-services.sh # stops only what this harness started
 ```
 
 `env.sh` is the single source of truth for every port, DB URL, and MCP
 bearer key `scripts/*.sh` uses — edit ports there only.
+
+## Sustained backlog-ramp soak (`features/soak_backlog_ramp.feature`, `@soak`)
+
+`scripts/06-run-soak.sh` runs a dedicated, long-running scenario — by
+default one hour — that ramps injected backlog into BOTH the `pick-soak`
+and `pack-soak` process paths while a configurable pool of picker and
+packer stations continuously claims and completes the resulting
+fulfillment-execution tasks. It proves the estate stays up and keeps
+processing under sustained, ramping load — unlike every other scenario
+here, which proves a single deterministic unit of work flows correctly.
+
+- **Excluded by default.** `e2e_test.go`'s `TestMain` filters scenarios
+  with `GODOG_TAGS` (default `~@soak`, i.e. "everything except `@soak`"),
+  so `scripts/04-run-tests.sh` and a plain `go test ./...` never run it.
+  Only `scripts/06-run-soak.sh` sets `GODOG_TAGS=@soak` to run it in
+  isolation.
+- **Observational, not assertive.** Once picker/packer throughput can't
+  keep up with the ramp, `wes-work-planning`'s `/release` legitimately
+  returns `409` (WIP limit reached / pool empty) and
+  `fulfillment-execution`'s `/claim-next` legitimately returns `409` (no
+  claimable task) — both are counted in the printed summary, not treated
+  as failures. The scenario only fails on a hard connectivity/setup
+  problem (it never managed to enqueue a single work unit for the whole
+  run).
+- **Tunable via env vars** (all optional — see `soak_test.go` for exact
+  defaults): `SOAK_DURATION` (default `1h`), `SOAK_RAMP_START_INTERVAL`
+  (default `2s`), `SOAK_RAMP_END_INTERVAL` (default `200ms`),
+  `SOAK_WIP_LIMIT` (default `20`, both paths), `SOAK_PICKERS` (default
+  `3`), `SOAK_PACKERS` (default `2`).
+- A quick smoke run before committing to the full hour:
+  `SOAK_DURATION=1m SOAK_RAMP_START_INTERVAL=1s SOAK_RAMP_END_INTERVAL=200ms bash scripts/06-run-soak.sh`.
 
 ## Service lifecycle notes
 
