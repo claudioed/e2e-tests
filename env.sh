@@ -65,6 +65,51 @@ OPS_AGENT_HTTP_PORT=8096
 OPS_AGENT_BASE_URL="http://localhost:${OPS_AGENT_HTTP_PORT}"
 OPS_AGENT_MCP_READ_KEY="e2e-ops-agent-mcp-read-key"
 
+# ---- Analytics *-reports ports (each context's separate read-only reports
+#      binary -- cmd/<svc>-reports, backed by its own analytical Postgres,
+#      NOT the OLTP HTTP ports above) -- feeds warehouse-ops-agent's
+#      console-bff WMS/WES dashboard fan-out (GET /console/reports/wms and
+#      /wes; see internal/config/config.go's *ReportsRESTURL fields).
+#
+#      New port assignment, not an existing convention: every *-reports
+#      binary defaults to the SAME HTTP_ADDR=":8092" today (which also
+#      collides with INVENTORY_MCP_PORT above), so running more than one
+#      locally already needed a per-service override before this harness
+#      ever cared about reports ports. This 8101-8107 range mirrors the
+#      8081-8086 OLTP ordering above, shifted by +20, clear of the existing
+#      8081-8096 OLTP/MCP/agent range this file already occupies.
+FACILITY_REPORTS_HTTP_PORT=8101
+INVENTORY_REPORTS_HTTP_PORT=8102
+WES_REPORTS_HTTP_PORT=8103
+FULFILLMENT_REPORTS_HTTP_PORT=8104
+WORKFORCE_REPORTS_HTTP_PORT=8105
+ORDER_REPORTS_HTTP_PORT=8106
+# labor-performance is not (yet) one of this harness's orchestrated OLTP
+# services (no LABOR_REPO/LABOR_HTTP_PORT above) -- its reports port is
+# still assigned here, in sequence, purely so
+# LABOR_PERFORMANCE_REPORTS_REST_URL lines up with warehouse-ops-agent's
+# own env var naming if/when this harness starts that service too.
+LABOR_REPORTS_HTTP_PORT=8107
+
+FACILITY_REPORTS_BASE_URL="http://localhost:${FACILITY_REPORTS_HTTP_PORT}"
+INVENTORY_REPORTS_BASE_URL="http://localhost:${INVENTORY_REPORTS_HTTP_PORT}"
+WES_REPORTS_BASE_URL="http://localhost:${WES_REPORTS_HTTP_PORT}"
+FULFILLMENT_REPORTS_BASE_URL="http://localhost:${FULFILLMENT_REPORTS_HTTP_PORT}"
+WORKFORCE_REPORTS_BASE_URL="http://localhost:${WORKFORCE_REPORTS_HTTP_PORT}"
+ORDER_REPORTS_BASE_URL="http://localhost:${ORDER_REPORTS_HTTP_PORT}"
+LABOR_REPORTS_BASE_URL="http://localhost:${LABOR_REPORTS_HTTP_PORT}"
+
+# Maps 1:1 onto warehouse-ops-agent's own env var names, so a local run of
+# the agent against this harness's services can source this file directly
+# rather than re-deriving the mapping by hand.
+FACILITY_LAYOUT_REPORTS_REST_URL="${FACILITY_REPORTS_BASE_URL}"
+INVENTORY_STORAGE_REPORTS_REST_URL="${INVENTORY_REPORTS_BASE_URL}"
+WES_WORK_PLANNING_REPORTS_REST_URL="${WES_REPORTS_BASE_URL}"
+FULFILLMENT_EXECUTION_REPORTS_REST_URL="${FULFILLMENT_REPORTS_BASE_URL}"
+WORKFORCE_MANAGEMENT_REPORTS_REST_URL="${WORKFORCE_REPORTS_BASE_URL}"
+ORDER_MANAGEMENT_REPORTS_REST_URL="${ORDER_REPORTS_BASE_URL}"
+LABOR_PERFORMANCE_REPORTS_REST_URL="${LABOR_REPORTS_BASE_URL}"
+
 # DAILY_BRIEF_PATH_TARGETS override: points the E3 daily-brief synthesis at
 # a dedicated T5 process path ("pick-t5-imbalance", building "wh1", shift
 # "shift-t5") instead of ops-agent's built-in default ("pick-zone-a",
