@@ -13,6 +13,11 @@ FULFILLMENT_REPO="${REPOS_ROOT}/fulfillment-execution"
 WORKFORCE_REPO="${REPOS_ROOT}/workforce-management"
 OPS_AGENT_REPO="${REPOS_ROOT}/warehouse-ops-agent"
 ORDER_REPO="${REPOS_ROOT}/order-management"
+# process-path-management (8th bounded context — Generic Subdomain owning
+# the fleet's declared process-path catalogue, replacing the static
+# config/process-paths/*.yaml file the other five services used to boot
+# from — see warehouse-infra's ADR for the Kafka-propagation redesign).
+PROCESS_PATH_REPO="${REPOS_ROOT}/process-path-management"
 
 BIN_DIR="${WORKSPACE_ROOT}/bin"
 LOG_DIR="${WORKSPACE_ROOT}/logs"
@@ -29,6 +34,9 @@ WORKFORCE_HTTP_PORT=8085
 # see CLAUDE.md's "Cross-service integration" section) — next free slot
 # after workforce-management's :8085.
 ORDER_HTTP_PORT=8086
+# process-path-management (8th bounded context) — next free slot after
+# order-management's :8086.
+PROCESS_PATH_HTTP_PORT=8087
 
 FACILITY_BASE_URL="http://localhost:${FACILITY_HTTP_PORT}"
 INVENTORY_BASE_URL="http://localhost:${INVENTORY_HTTP_PORT}"
@@ -36,6 +44,7 @@ WES_BASE_URL="http://localhost:${WES_HTTP_PORT}"
 FULFILLMENT_BASE_URL="http://localhost:${FULFILLMENT_HTTP_PORT}"
 WORKFORCE_BASE_URL="http://localhost:${WORKFORCE_HTTP_PORT}"
 ORDER_BASE_URL="http://localhost:${ORDER_HTTP_PORT}"
+PROCESS_PATH_BASE_URL="http://localhost:${PROCESS_PATH_HTTP_PORT}"
 
 # ---- MCP ports (each context's Streamable-HTTP MCP server, cmd/mcp,
 #      alongside its HTTP service above) ----------------------------
@@ -131,6 +140,9 @@ WORKFORCE_DB_URL="postgres://workforce:workforce@localhost:5445/workforce?sslmod
 # management's own :5434 default, per this file's own port-offset
 # convention documented in docker-compose.yml's header comment).
 ORDER_DB_URL="postgres://order:order@localhost:5446/order?sslmode=disable"
+# process-path-management (8th bounded context) — next free slot after
+# order-management's :5446.
+PROCESS_PATH_DB_URL="postgres://process_path:process_path@localhost:5447/process_path?sslmode=disable"
 
 # ---- Kafka: shared broker from ~/warehouse-systems/docker-compose.kafka.yml
 KAFKA_BROKERS="localhost:9092"
