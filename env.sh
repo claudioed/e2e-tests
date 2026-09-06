@@ -13,6 +13,16 @@ FULFILLMENT_REPO="${REPOS_ROOT}/fulfillment-execution"
 WORKFORCE_REPO="${REPOS_ROOT}/workforce-management"
 OPS_AGENT_REPO="${REPOS_ROOT}/warehouse-ops-agent"
 ORDER_REPO="${REPOS_ROOT}/order-management"
+
+# The fleet's declared process-path catalogue file (a Published Language,
+# owned by warehouse-infra -- see that file's own header comment), read
+# at boot by fulfillment-execution/wes-work-planning/workforce-management
+# whenever they run with PATH_CATALOGUE_SOURCE=file (this harness's own
+# default -- see 03-up-services.sh's header comment). Genuinely required:
+# each of those three services' main() treats a missing/malformed
+# catalogue as a boot-time fatal error, by design (never falls back to
+# an empty catalogue).
+PATH_CATALOGUE_FILE="${REPOS_ROOT}/warehouse-infra/config/process-paths/sortable-fc.yaml"
 # process-path-management (8th bounded context — Generic Subdomain owning
 # the fleet's declared process-path catalogue, replacing the static
 # config/process-paths/*.yaml file the other five services used to boot
