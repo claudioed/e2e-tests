@@ -44,6 +44,8 @@ var (
 	workforceBaseURL    = envOrDefault("WORKFORCE_BASE_URL", "http://localhost:8085")
 	opsAgentBaseURL     = envOrDefault("OPS_AGENT_BASE_URL", "http://localhost:8096")
 	orderBaseURL        = envOrDefault("ORDER_BASE_URL", "http://localhost:8086")
+	processPathBaseURL  = envOrDefault("PROCESS_PATH_BASE_URL", "http://localhost:8087")
+	laborBaseURL        = envOrDefault("LABOR_BASE_URL", "http://localhost:8088")
 	inventoryDBURL      = envOrDefault("INVENTORY_DB_URL", "postgres://inventory:***@localhost:5442/inventory?sslmode=disable")
 	wesDBURL            = envOrDefault("WES_DB_URL", "postgres://wes:***@localhost:5443/wes?sslmode=disable")
 	fulfillmentDBURL    = envOrDefault("FULFILLMENT_DB_URL", "postgres://fulfillment:***@localhost:5444/fulfillment_execution?sslmode=disable")
@@ -425,6 +427,19 @@ func (w *world) registerStation(stationID, capabilities string) error {
 	}))
 }
 
+// checkInStation assigns occupantID to stationID (fulfillment-execution's
+// CheckIn invariant: one occupant at a time). This publishes no domain
+// event of its own — the occupant is surfaced, best-effort, as
+// associateId on a LATER TaskCompleted event for any task this station
+// completes while the occupant remains checked in (see ADR-0014). Used
+// by labor_performance.feature to give a completed task a real
+// associateId for labor-performance's consumer to score.
+func (w *world) checkInStation(associateID, stationID string) error {
+	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/stations/%s/check-in", fulfillmentBaseURL, stationID), map[string]any{
+		"occupantId": associateID,
+	}))
+}
+
 // fulfillmentEventuallyCreatesTaskFor polls the PICK queue depth until it
 // is >= 1, proving the WorkReleased Kafka consumer created a Task. The
 // order ref itself isn't independently queryable pre-claim, so depth > 0
@@ -754,6 +769,158 @@ func (w *world) wesEventuallyEnqueuesWorkUnitForOrderLine(lineNo int, pathID str
 }
 
 // ---------------------------------------------------------------------
+// labor-performance steps
+//
+// labor-performance is a PURE Kafka consumer: it has no REST endpoint
+// any external caller writes a TaskPerformance to. A scorecard can only
+// ever be populated by its own consumer of fulfillment-execution's
+// TaskCompleted event (warehouse.fulfillment.events, the same shared
+// topic wes-work-planning also consumes) actually running against a
+// real completed task. defineStandard is its one REST write (an
+// operator setting an engineered labor standard), used here purely as
+// scenario setup so the consumed task has a standard to be scored
+// against.
+// ---------------------------------------------------------------------
+
+func (w *world) laborDefinesStandard(expectedSeconds int, taskType string) error {
+	return w.expectOK2xx(w.doJSON(http.MethodPost, laborBaseURL+"/standards", map[string]any{
+		"taskType": taskType, "expectedSeconds": expectedSeconds,
+	}))
+}
+
+// laborEventuallyReportsScorecard polls GET /associates/{id}/scorecard
+// until it 200s with taskCount >= minTasks, proving fulfillment-
+// execution's TaskCompleted event was actually consumed and scored —
+// tolerating 404 while the Kafka consumer catches up.
+func (w *world) laborEventuallyReportsScorecard(associateID string, minTasks int) error {
+	return eventually(func() error {
+		if err := w.doJSON(http.MethodGet, fmt.Sprintf("%s/associates/%s/scorecard", laborBaseURL, associateID), nil); err != nil {
+			return err
+		}
+		if w.last.status != http.StatusOK {
+			return fmt.Errorf("status %d (body=%s)", w.last.status, w.last.body)
+		}
+		got := w.last.json()
+		count, _ := toFloat(got["taskCount"])
+		if int(count) < minTasks {
+			return fmt.Errorf("taskCount = %v, want >= %d", got["taskCount"], minTasks)
+		}
+		return nil
+	})
+}
+
+// ---------------------------------------------------------------------
+// process-path-management steps
+//
+// process-path-management is the fleet's declared process-path
+// catalogue SOURCE: every write here (define/revise/deactivate)
+// publishes a ProcessPathCreated/Updated/Deactivated event onto Kafka,
+// but this scenario exercises the REST lifecycle directly and asserts
+// on this service's OWN read model after each write — proving the
+// write side and the resulting state transition work against a real,
+// independently running process, not just its own unit/integration
+// tests. (No sibling context in this harness runs with
+// PATH_CATALOGUE_SOURCE=kafka today — see 03-up-services.sh's own
+// comment — so a cross-service consumption proof is a separate,
+// future scenario once one does.)
+// ---------------------------------------------------------------------
+
+func (w *world) definePath(pathID, matchPrefix, capabilities string) error {
+	return w.expectOK2xx(w.doJSON(http.MethodPost, processPathBaseURL+"/process-paths", map[string]any{
+		"pathId": pathID, "matchPrefix": matchPrefix, "requiredCapabilities": strings.Split(capabilities, ","),
+	}))
+}
+
+func (w *world) getPath(pathID string) error {
+	return w.doJSON(http.MethodGet, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), nil)
+}
+
+func (w *world) pathStatusIs(pathID, want string) error {
+	if err := w.getPath(pathID); err != nil {
+		return err
+	}
+	if w.last.status != http.StatusOK {
+		return fmt.Errorf("GET process-path %s: status %d (body=%s)", pathID, w.last.status, w.last.body)
+	}
+	got := w.last.json()
+	if got["status"] != want {
+		return fmt.Errorf("process path %s status = %v, want %q (full body: %s)", pathID, got["status"], want, w.last.body)
+	}
+	return nil
+}
+
+func (w *world) pathResponseMatchPrefixIs(want string) error {
+	got := w.last.json()
+	if got["matchPrefix"] != want {
+		return fmt.Errorf("process path matchPrefix = %v, want %q (full body: %s)", got["matchPrefix"], want, w.last.body)
+	}
+	return nil
+}
+
+func (w *world) revisePath(pathID, matchPrefix, capabilities string) error {
+	return w.expectOK2xx(w.doJSON(http.MethodPut, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), map[string]any{
+		"matchPrefix": matchPrefix, "requiredCapabilities": strings.Split(capabilities, ","),
+	}))
+}
+
+func (w *world) deactivatePath(pathID string) error {
+	return w.doJSON(http.MethodDelete, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), nil)
+}
+
+// listPaths lists process paths, passing ?all=true when all is true (the
+// audit view including Deactivated paths) or omitting the query
+// parameter entirely otherwise (the default Active-only view).
+func (w *world) listPaths(all bool) error {
+	url := processPathBaseURL + "/process-paths"
+	if all {
+		url += "?all=true"
+	}
+	return w.doJSON(http.MethodGet, url, nil)
+}
+
+func (w *world) activeListingIncludes(pathID string) error {
+	if err := w.listPaths(false); err != nil {
+		return err
+	}
+	return w.listingContains(pathID, true)
+}
+
+func (w *world) activeListingDoesNotInclude(pathID string) error {
+	if err := w.listPaths(false); err != nil {
+		return err
+	}
+	return w.listingContains(pathID, false)
+}
+
+func (w *world) fullListingIncludes(pathID string) error {
+	if err := w.listPaths(true); err != nil {
+		return err
+	}
+	return w.listingContains(pathID, true)
+}
+
+func (w *world) listingContains(pathID string, want bool) error {
+	if w.last.status != http.StatusOK {
+		return fmt.Errorf("GET process-paths: status %d (body=%s)", w.last.status, w.last.body)
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(w.last.body, &items); err != nil {
+		return fmt.Errorf("decoding process-paths list: %w (body=%s)", err, w.last.body)
+	}
+	found := false
+	for _, item := range items {
+		if item["pathId"] == pathID {
+			found = true
+			break
+		}
+	}
+	if found != want {
+		return fmt.Errorf("process-paths listing contains %q = %v, want %v (full body: %s)", pathID, found, want, w.last.body)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------
 // generic assertion helpers
 // ---------------------------------------------------------------------
 
@@ -850,6 +1017,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 
 	// fulfillment-execution
 	sc.Step(`^a station "([^"]*)" is registered with capabilities "([^"]*)" in fulfillment-execution$`, w.registerStation)
+	sc.Step(`^associate "([^"]*)" checks into station "([^"]*)" in fulfillment-execution$`, w.checkInStation)
 	sc.Step(`^fulfillment-execution eventually creates a task for order "([^"]*)"$`, w.fulfillmentEventuallyCreatesTaskFor)
 	sc.Step(`^station "([^"]*)" claims the next "([^"]*)" task in fulfillment-execution$`, w.claimNextTask)
 	sc.Step(`^the claimed task is for order "([^"]*)"$`, w.claimedTaskIsForOrder)
@@ -872,6 +1040,21 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I place an order for (\d+) units? of SKU "([^"]*)" allowing ship-complete only in order-management$`, w.iPlaceAnOrderForUnitsOfSKU)
 	sc.Step(`^the order is allocated in order-management$`, w.theOrderIsAllocated)
 	sc.Step(`^wes-work-planning eventually enqueues a work unit for the order's line (\d+) on process path "([^"]*)"$`, w.wesEventuallyEnqueuesWorkUnitForOrderLine)
+
+	// labor-performance
+	sc.Step(`^labor-performance defines a standard of (\d+) expected seconds for task type "([^"]*)"$`, w.laborDefinesStandard)
+	sc.Step(`^labor-performance eventually reports a scorecard for associate "([^"]*)" with at least (\d+) tasks? scored$`, w.laborEventuallyReportsScorecard)
+
+	// process-path-management
+	sc.Step(`^I define process path "([^"]*)" with match prefix "([^"]*)" and required capabilities "([^"]*)" in process-path-management$`, w.definePath)
+	sc.Step(`^I get process path "([^"]*)" from process-path-management$`, w.getPath)
+	sc.Step(`^process path "([^"]*)" in process-path-management has status "([^"]*)"$`, w.pathStatusIs)
+	sc.Step(`^the process path response match prefix is "([^"]*)"$`, w.pathResponseMatchPrefixIs)
+	sc.Step(`^I revise process path "([^"]*)" to match prefix "([^"]*)" and required capabilities "([^"]*)" in process-path-management$`, w.revisePath)
+	sc.Step(`^I deactivate process path "([^"]*)" in process-path-management$`, w.deactivatePath)
+	sc.Step(`^process-path-management's active process path listing includes "([^"]*)"$`, w.activeListingIncludes)
+	sc.Step(`^process-path-management's active process path listing does not include "([^"]*)"$`, w.activeListingDoesNotInclude)
+	sc.Step(`^process-path-management's full process path listing includes "([^"]*)"$`, w.fullListingIncludes)
 
 	// soak backlog ramp (features/soak_backlog_ramp.feature, @soak —
 	// excluded from the default run, see TestMain's Tags option)
