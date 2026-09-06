@@ -2,7 +2,7 @@
 # e2e-tests/scripts/02-up-infra.sh
 #
 # Brings up the shared Kafka broker (if not already running) and this
-# harness's five dedicated Postgres instances (docker-compose.yml in this
+# harness's seven dedicated Postgres instances (docker-compose.yml in this
 # directory), then waits for all of them to report healthy.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

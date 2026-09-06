@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 # e2e-tests/scripts/03-up-services.sh
 #
-# Starts all 6 bounded-context HTTP services as background processes
+# Starts all 7 bounded-context HTTP services as background processes
 # against Postgres + Kafka, in dependency order:
-#   1. facility-layout   — no deps (Open Host Service for the warehouse map)
-#   2. inventory-storage — calls facility-layout over HTTP for hazmat/
+#   1. process-path-management — no deps (Generic Subdomain owning the
+#                           fleet's declared process-path catalogue;
+#                           publishes ProcessPathCreated/Updated/
+#                           Deactivated to Kafka, which the other five
+#                           services below optionally consume when they
+#                           set PATH_CATALOGUE_SOURCE=kafka -- see
+#                           warehouse-infra's deploy_process_path_kafka_source
+#                           Terraform variable for the equivalent live-
+#                           cluster toggle)
+#   2. facility-layout   — no deps (Open Host Service for the warehouse map)
+#   3. inventory-storage — calls facility-layout over HTTP for hazmat/
 #                           temperature placement checks (LOCATION_LOOKUP_MODE=http)
-#   3. wes-work-planning — calls inventory-storage over HTTP for product
+#   4. wes-work-planning — calls inventory-storage over HTTP for product
 #                           classification (PRODUCT_CLASSIFICATION_MODE=http),
 #                           consumes workforce/inventory/fulfillment/order-management Kafka topics
-#   4. fulfillment-execution — consumes WorkReleased from wes-work-planning's
+#   5. fulfillment-execution — consumes WorkReleased from wes-work-planning's
 #                           Kafka topic, calls inventory-storage over HTTP for
 #                           DOT hazard segregation, publishes TaskCompleted
-#   5. workforce-management — publishes ShiftPlanCommitted to Kafka, which
+#   6. workforce-management — publishes ShiftPlanCommitted to Kafka, which
 #                           wes-work-planning's labor-plan-view projects
-#   6. order-management  — calls inventory-storage over HTTP (synchronous
+#   7. order-management  — calls inventory-storage over HTTP (synchronous
 #                           allocation), then publishes OrderAllocated /
 #                           OrderPartiallyAllocated to Kafka, which
 #                           wes-work-planning's 4th consumer subscription
@@ -23,15 +32,32 @@
 #                           order_management_choreographed_release.feature
 #                           proves end-to-end.
 #
-# All six run with EVENT_PUBLISHER=kafka against the shared broker so the
+# All seven run with EVENT_PUBLISHER=kafka against the shared broker so the
 # cross-context event flow (WorkReleased -> Task, TaskCompleted -> WorkUnit
 # completion, ShiftPlanCommitted -> labor-plan-view, OrderAllocated/
 # OrderPartiallyAllocated -> WorkUnit) is exercised for real, not just each
-# service in isolation.
+# service in isolation. process-path-management's own catalogue events are
+# NOT consumed by any of the six below in this harness today (each still
+# defaults to PATH_CATALOGUE_SOURCE=file, matching the live cluster's own
+# default-off toggle) -- process-path-management is started here so its
+# REST API and Kafka publisher are available to exercise directly, and so
+# opting a service into PATH_CATALOGUE_SOURCE=kafka locally is a one-line
+# addition to that service's start_service call below, not a new harness
+# feature.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
+
+log "starting process-path-management on ${PROCESS_PATH_BASE_URL}"
+start_service process-path "${BIN_DIR}/process-path" \
+  HTTP_ADDR=":${PROCESS_PATH_HTTP_PORT}" \
+  DATABASE_URL="${PROCESS_PATH_DB_URL}" \
+  MIGRATIONS_PATH="${PROCESS_PATH_REPO}/migrations" \
+  EVENT_PUBLISHER=kafka \
+  KAFKA_BROKERS="${KAFKA_BROKERS}" \
+  LOG_LEVEL=info
+wait_for_http "${PROCESS_PATH_BASE_URL}/healthz"
 
 log "starting facility-layout on ${FACILITY_BASE_URL}"
 start_service facility "${BIN_DIR}/facility" \
@@ -111,7 +137,8 @@ start_service order "${BIN_DIR}/order" \
   LOG_LEVEL=info
 wait_for_http "${ORDER_BASE_URL}/healthz"
 
-log "all 6 services up and healthy"
+log "all 7 services up and healthy"
+printf '  %-24s %s\n' process-path-management "${PROCESS_PATH_BASE_URL}"
 printf '  %-24s %s\n' facility-layout        "${FACILITY_BASE_URL}"
 printf '  %-24s %s\n' inventory-storage      "${INVENTORY_BASE_URL}"
 printf '  %-24s %s\n' wes-work-planning      "${WES_BASE_URL}"
