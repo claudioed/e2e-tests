@@ -240,7 +240,20 @@ start_service labor-mcp "${BIN_DIR}/labor-mcp" \
   LOG_LEVEL=info
 wait_for_tcp localhost "${LABOR_MCP_PORT}"
 
-log "all 6 MCP servers up"
+# order-management's MCP server, same deliberate-non-wiring rationale as
+# labor-mcp above: no existing T5 use case reaches order-management via
+# MCP rather than its existing REST client, so no mcpclient/ops-agent
+# wiring is added here either.
+log "starting order-management MCP server on :${ORDER_MCP_PORT}"
+start_service order-mcp "${BIN_DIR}/order-mcp" \
+  MCP_ADDR=":${ORDER_MCP_PORT}" \
+  DATABASE_URL="${ORDER_DB_URL}" \
+  MIGRATIONS_PATH="${ORDER_REPO}/migrations" \
+  MCP_READ_KEY="${ORDER_MCP_READ_KEY}" \
+  LOG_LEVEL=info
+wait_for_tcp localhost "${ORDER_MCP_PORT}"
+
+log "all 7 MCP servers up"
 
 # --- warehouse-ops-agent (T5): the agentic analyze/act layer, wired to
 # the 5 MCP servers just started above as its only upstream dependency. --
