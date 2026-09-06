@@ -8,13 +8,13 @@ their published REST APIs with a [godog](https://github.com/cucumber/godog)
 (Cucumber for Go) suite. It never imports another repo's Go packages —
 exactly like a human running curl against a live deployment.
 
-This repo is a study-project companion to seven bounded-context repos
+This repo is a study-project companion to eight bounded-context repos
 (`facility-layout`, `inventory-storage`, `wes-work-planning`,
 `fulfillment-execution`, `workforce-management`, `order-management`,
-`process-path-management`) plus the read-side decision-support agent
-`warehouse-ops-agent`, all siblings under the same `warehouse-systems/`
-workspace root — see `env.sh`'s `REPOS_ROOT` for the layout this harness
-assumes.
+`process-path-management`, `labor-performance`) plus the read-side
+decision-support agent `warehouse-ops-agent`, all siblings under the same
+`warehouse-systems/` workspace root — see `env.sh`'s `REPOS_ROOT` for the
+layout this harness assumes.
 
 ## What's covered
 

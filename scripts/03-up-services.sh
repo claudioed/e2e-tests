@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # e2e-tests/scripts/03-up-services.sh
 #
-# Starts all 7 bounded-context HTTP services as background processes
+# Starts all 8 bounded-context HTTP services as background processes
 # against Postgres + Kafka, in dependency order:
 #   1. process-path-management — no deps (Generic Subdomain owning the
 #                           fleet's declared process-path catalogue;
@@ -21,9 +21,13 @@
 #   5. fulfillment-execution — consumes WorkReleased from wes-work-planning's
 #                           Kafka topic, calls inventory-storage over HTTP for
 #                           DOT hazard segregation, publishes TaskCompleted
-#   6. workforce-management — publishes ShiftPlanCommitted to Kafka, which
+#   6. labor-performance  — consumes fulfillment-execution's TaskCompleted
+#                           (unconditional, no toggle) to compute
+#                           engineered-labor-standards performance scoring;
+#                           no HTTP calls to/from any other context.
+#   7. workforce-management — publishes ShiftPlanCommitted to Kafka, which
 #                           wes-work-planning's labor-plan-view projects
-#   7. order-management  — calls inventory-storage over HTTP (synchronous
+#   8. order-management  — calls inventory-storage over HTTP (synchronous
 #                           allocation), then publishes OrderAllocated /
 #                           OrderPartiallyAllocated to Kafka, which
 #                           wes-work-planning's 4th consumer subscription
@@ -32,12 +36,16 @@
 #                           order_management_choreographed_release.feature
 #                           proves end-to-end.
 #
-# All seven run with EVENT_PUBLISHER=kafka against the shared broker so the
-# cross-context event flow (WorkReleased -> Task, TaskCompleted -> WorkUnit
-# completion, ShiftPlanCommitted -> labor-plan-view, OrderAllocated/
-# OrderPartiallyAllocated -> WorkUnit) is exercised for real, not just each
-# service in isolation. process-path-management's own catalogue events are
-# NOT consumed by any of the six below in this harness today (each still
+# All seven publisher-capable services run with EVENT_PUBLISHER=kafka
+# against the shared broker (labor-performance is the exception -- it has
+# no EVENT_PUBLISHER flag at all, being a pure consumer, though it still
+# needs KAFKA_BROKERS to build its consumer group) so the cross-context
+# event flow (WorkReleased -> Task, TaskCompleted -> WorkUnit completion /
+# labor-performance scoring, ShiftPlanCommitted -> labor-plan-view,
+# OrderAllocated/OrderPartiallyAllocated -> WorkUnit) is exercised for
+# real, not just each service in isolation. process-path-management's own
+# catalogue events are NOT consumed by any of the six below in this harness
+# today (each still
 # defaults to PATH_CATALOGUE_SOURCE=file, matching the live cluster's own
 # default-off toggle) -- process-path-management is started here so its
 # REST API and Kafka publisher are available to exercise directly, and so
@@ -105,6 +113,21 @@ start_service_in execution "${FULFILLMENT_REPO}" "${BIN_DIR}/execution" \
   LOG_LEVEL=info
 wait_for_http "${FULFILLMENT_BASE_URL}/healthz"
 
+log "starting labor-performance on ${LABOR_BASE_URL}"
+# labor-performance (7th bounded context): consumes fulfillment-execution's
+# TaskCompleted event (unconditional -- no PATH_CATALOGUE-style toggle;
+# see env.sh's own comment) to compute engineered-labor-standards
+# performance scoring. Started right after fulfillment-execution so a
+# real TaskCompleted has already been published by the time any scenario
+# exercises it.
+start_service labor "${BIN_DIR}/labor" \
+  HTTP_ADDR=":${LABOR_HTTP_PORT}" \
+  DATABASE_URL="${LABOR_DB_URL}" \
+  MIGRATIONS_PATH="${LABOR_REPO}/migrations" \
+  KAFKA_BROKERS="${KAFKA_BROKERS}" \
+  LOG_LEVEL=info
+wait_for_http "${LABOR_BASE_URL}/healthz"
+
 log "starting workforce-management on ${WORKFORCE_BASE_URL}"
 start_service workforce "${BIN_DIR}/workforce" \
   HTTP_ADDR=":${WORKFORCE_HTTP_PORT}" \
@@ -137,12 +160,13 @@ start_service order "${BIN_DIR}/order" \
   LOG_LEVEL=info
 wait_for_http "${ORDER_BASE_URL}/healthz"
 
-log "all 7 services up and healthy"
+log "all 8 services up and healthy"
 printf '  %-24s %s\n' process-path-management "${PROCESS_PATH_BASE_URL}"
 printf '  %-24s %s\n' facility-layout        "${FACILITY_BASE_URL}"
 printf '  %-24s %s\n' inventory-storage      "${INVENTORY_BASE_URL}"
 printf '  %-24s %s\n' wes-work-planning      "${WES_BASE_URL}"
 printf '  %-24s %s\n' fulfillment-execution  "${FULFILLMENT_BASE_URL}"
+printf '  %-24s %s\n' labor-performance      "${LABOR_BASE_URL}"
 printf '  %-24s %s\n' workforce-management   "${WORKFORCE_BASE_URL}"
 printf '  %-24s %s\n' order-management       "${ORDER_BASE_URL}"
 

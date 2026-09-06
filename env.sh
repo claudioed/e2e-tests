@@ -18,6 +18,13 @@ ORDER_REPO="${REPOS_ROOT}/order-management"
 # config/process-paths/*.yaml file the other five services used to boot
 # from — see warehouse-infra's ADR for the Kafka-propagation redesign).
 PROCESS_PATH_REPO="${REPOS_ROOT}/process-path-management"
+# labor-performance (7th bounded context — engineered labor standards /
+# performance scoring, a pure Kafka consumer of fulfillment-execution's
+# TaskCompleted event; no HTTP dependency on any other context, so it
+# starts after fulfillment-execution purely so its consumer has a real
+# topic to subscribe to from the start, not because of a synchronous
+# call).
+LABOR_REPO="${REPOS_ROOT}/labor-performance"
 
 BIN_DIR="${WORKSPACE_ROOT}/bin"
 LOG_DIR="${WORKSPACE_ROOT}/logs"
@@ -37,6 +44,9 @@ ORDER_HTTP_PORT=8086
 # process-path-management (8th bounded context) — next free slot after
 # order-management's :8086.
 PROCESS_PATH_HTTP_PORT=8087
+# labor-performance (7th bounded context) — next free slot after
+# process-path-management's :8087.
+LABOR_HTTP_PORT=8088
 
 FACILITY_BASE_URL="http://localhost:${FACILITY_HTTP_PORT}"
 INVENTORY_BASE_URL="http://localhost:${INVENTORY_HTTP_PORT}"
@@ -45,6 +55,7 @@ FULFILLMENT_BASE_URL="http://localhost:${FULFILLMENT_HTTP_PORT}"
 WORKFORCE_BASE_URL="http://localhost:${WORKFORCE_HTTP_PORT}"
 ORDER_BASE_URL="http://localhost:${ORDER_HTTP_PORT}"
 PROCESS_PATH_BASE_URL="http://localhost:${PROCESS_PATH_HTTP_PORT}"
+LABOR_BASE_URL="http://localhost:${LABOR_HTTP_PORT}"
 
 # ---- MCP ports (each context's Streamable-HTTP MCP server, cmd/mcp,
 #      alongside its HTTP service above) ----------------------------
@@ -143,11 +154,15 @@ ORDER_DB_URL="postgres://order:order@localhost:5446/order?sslmode=disable"
 # process-path-management (8th bounded context) — next free slot after
 # order-management's :5446.
 PROCESS_PATH_DB_URL="postgres://process_path:process_path@localhost:5447/process_path?sslmode=disable"
+# labor-performance (7th bounded context) — next free slot after
+# process-path-management's :5447.
+LABOR_DB_URL="postgres://labor:labor@localhost:5448/labor?sslmode=disable"
 
-# ---- Kafka: shared broker from ~/warehouse-systems/docker-compose.kafka.yml
+# ---- Kafka: single broker platform-wide, owned by the warehouse-infra
+#      kind cluster and exposed to the host at localhost:9092 via a
+#      Bitnami externalAccess NodePort (warehouse-infra PR #6). This
+#      harness does not start its own broker -- see scripts/02-up-infra.sh.
 KAFKA_BROKERS="localhost:9092"
-KAFKA_COMPOSE_FILE="${REPOS_ROOT}/docker-compose.kafka.yml"
-KAFKA_CONTAINER_NAME="warehouse-kafka"
 
 # ---- misc -----------------------------------------------------------
 HEALTH_TIMEOUT_SECS=60
