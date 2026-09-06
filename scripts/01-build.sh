@@ -37,15 +37,16 @@ build_one process-path "${PROCESS_PATH_REPO}" pathmgmt
 # out of scope, no consumer of them exists in this harness's own scenarios.
 build_one labor         "${LABOR_REPO}"         labor
 
-log "building 5 MCP server binaries into ${BIN_DIR} (cmd/mcp — the agentic see-layer)"
+log "building 6 MCP server binaries into ${BIN_DIR} (cmd/mcp — the agentic see-layer)"
 build_one facility-mcp     "${FACILITY_REPO}"     mcp
 build_one inventory-mcp    "${INVENTORY_REPO}"    mcp
 build_one wes-mcp          "${WES_REPO}"          mcp
 build_one execution-mcp    "${FULFILLMENT_REPO}"  mcp
 build_one workforce-mcp    "${WORKFORCE_REPO}"    mcp
+build_one labor-mcp        "${LABOR_REPO}"        mcp
 
 log "building warehouse-ops-agent (cmd/agent — the agentic analyze/act layer, T5)"
 build_one ops-agent "${OPS_AGENT_REPO}" agent
 
-log "all 14 binaries built"
+log "all 15 binaries built"
 ls -la "${BIN_DIR}"

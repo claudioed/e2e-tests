@@ -222,7 +222,25 @@ start_service workforce-mcp "${BIN_DIR}/workforce-mcp" \
   LOG_LEVEL=info
 wait_for_tcp localhost "${WORKFORCE_MCP_PORT}"
 
-log "all 5 MCP servers up"
+# labor-performance's MCP server is started here too, for harness parity
+# with the other 5 -- but it is deliberately NOT wired into
+# warehouse-ops-agent's config below, unlike them. No T5 use case
+# (console_reports, dailybrief, flow_balance_advisory, order_lifecycle,
+# stranded_reservation) consumes labor-performance's scorecard/coaching-
+# flag data today; adding a 6th mcpclient with nothing calling it would
+# violate the MCP governance charter's own "tools map to a real decision"
+# rule. Starting it here still lets a scenario or a manual client exercise
+# it directly over the wire.
+log "starting labor-performance MCP server on :${LABOR_MCP_PORT}"
+start_service labor-mcp "${BIN_DIR}/labor-mcp" \
+  MCP_ADDR=":${LABOR_MCP_PORT}" \
+  DATABASE_URL="${LABOR_DB_URL}" \
+  MIGRATIONS_PATH="${LABOR_REPO}/migrations" \
+  MCP_READ_KEY="${LABOR_MCP_READ_KEY}" \
+  LOG_LEVEL=info
+wait_for_tcp localhost "${LABOR_MCP_PORT}"
+
+log "all 6 MCP servers up"
 
 # --- warehouse-ops-agent (T5): the agentic analyze/act layer, wired to
 # the 5 MCP servers just started above as its only upstream dependency. --
