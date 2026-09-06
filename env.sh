@@ -64,12 +64,21 @@ INVENTORY_MCP_PORT=8092
 WES_MCP_PORT=8093
 FULFILLMENT_MCP_PORT=8094
 WORKFORCE_MCP_PORT=8095
+# labor-performance (7th bounded context) -- placed after
+# OPS_AGENT_HTTP_PORT (8096) below rather than immediately following
+# WORKFORCE_MCP_PORT, since 8096 is already claimed by ops-agent's own
+# HTTP port. Registered here for harness parity with the other 5
+# contexts' MCP servers; NOT yet wired into warehouse-ops-agent's config
+# (no T5 use case consumes it today -- see 03-up-services.sh's own note
+# on the labor-mcp block for the full rationale).
+LABOR_MCP_PORT=8097
 
 FACILITY_MCP_URL="http://localhost:${FACILITY_MCP_PORT}/mcp"
 INVENTORY_MCP_URL="http://localhost:${INVENTORY_MCP_PORT}/mcp"
 WES_MCP_URL="http://localhost:${WES_MCP_PORT}/mcp"
 FULFILLMENT_MCP_URL="http://localhost:${FULFILLMENT_MCP_PORT}/mcp"
 WORKFORCE_MCP_URL="http://localhost:${WORKFORCE_MCP_PORT}/mcp"
+LABOR_MCP_URL="http://localhost:${LABOR_MCP_PORT}/mcp"
 
 # Fixed test-only bearer read keys, one per context's own MCP server —
 # same static-bearer-key scheme every context uses in prod (ADR-0008),
@@ -79,6 +88,7 @@ INVENTORY_MCP_READ_KEY="e2e-inventory-mcp-read-key"
 WES_MCP_READ_KEY="e2e-wes-mcp-read-key"
 FULFILLMENT_MCP_READ_KEY="e2e-fulfillment-mcp-read-key"
 WORKFORCE_MCP_READ_KEY="e2e-workforce-mcp-read-key"
+LABOR_MCP_READ_KEY="e2e-labor-mcp-read-key"
 
 # ---- warehouse-ops-agent (the agentic decision-support layer, T5) --
 OPS_AGENT_HTTP_PORT=8096
