@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib.sh"
 
-log "building 7 service binaries into ${BIN_DIR}"
+log "building 8 service binaries into ${BIN_DIR}"
 
 build_one() {
   local name="$1" repo="$2" cmd_pkg="$3"
@@ -31,6 +31,11 @@ build_one order        "${ORDER_REPO}"        order
 # process-path-management (8th bounded context): cmd/pathmgmt is its HTTP
 # binary package.
 build_one process-path "${PROCESS_PATH_REPO}" pathmgmt
+# labor-performance (7th bounded context): cmd/labor is its HTTP binary
+# package. It also has cmd/labor-projector and cmd/labor-reports (the
+# analytics data product) which this harness does not build/run --
+# out of scope, no consumer of them exists in this harness's own scenarios.
+build_one labor         "${LABOR_REPO}"         labor
 
 log "building 5 MCP server binaries into ${BIN_DIR} (cmd/mcp — the agentic see-layer)"
 build_one facility-mcp     "${FACILITY_REPO}"     mcp
@@ -42,5 +47,5 @@ build_one workforce-mcp    "${WORKFORCE_REPO}"    mcp
 log "building warehouse-ops-agent (cmd/agent — the agentic analyze/act layer, T5)"
 build_one ops-agent "${OPS_AGENT_REPO}" agent
 
-log "all 13 binaries built"
+log "all 14 binaries built"
 ls -la "${BIN_DIR}"
