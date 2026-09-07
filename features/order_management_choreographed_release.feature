@@ -17,15 +17,15 @@ Feature: Order-management choreographed release integrates with wes-work-plannin
   @e2e @order-management
   Scenario: Placing a fully-allocatable order releases work to wes-work-planning via Kafka
     # --- inventory-storage: stock the SKU this order will allocate against ---
-    Given a Bin "E2E-OM-BIN-1" with capacity 100 exists in inventory-storage
-    When I receive 10 units of SKU "SKU-E2E-OM-1" in inventory-storage
-    And I stow 10 units of SKU "SKU-E2E-OM-1" into bin "E2E-OM-BIN-1" in inventory-storage
-    Then the usable inventory for SKU "SKU-E2E-OM-1" in inventory-storage is 10
+    Given a Bin "E2E-OM-BIN-<run>" with capacity 100 exists in inventory-storage
+    When I receive 10 units of SKU "SKU-E2E-OM-<run>" in inventory-storage
+    And I stow 10 units of SKU "SKU-E2E-OM-<run>" into bin "E2E-OM-BIN-<run>" in inventory-storage
+    Then the usable inventory for SKU "SKU-E2E-OM-<run>" in inventory-storage is 10
 
     # --- order-management: place a ship-complete order for stock that exists ---
     # No /allocate or /release call follows — order-management's redesign
     # performs both, internally, inside this single POST /orders call.
-    When I place an order for 2 units of SKU "SKU-E2E-OM-1" allowing ship-complete only in order-management
+    When I place an order for 2 units of SKU "SKU-E2E-OM-<run>" allowing ship-complete only in order-management
     Then the response status is 201
     And the order is allocated in order-management
 
