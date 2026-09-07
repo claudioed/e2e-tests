@@ -17,32 +17,32 @@ Feature: process-path-management is the fleet's declared process-path catalogue 
   @e2e @process-path-management
   Scenario: Defining, revising, and deactivating a process path is reflected in its own read model
     # --- define: a brand-new path, rejecting a duplicate id ---
-    When I define process path "E2E-PROCESS-PATH" with match prefix "e2e-pp" and required capabilities "pick" in process-path-management
+    When I define process path "<run>" with match prefix "e2e-pp" and required capabilities "pick" in process-path-management
     Then the response status is 201
-    And process path "E2E-PROCESS-PATH" in process-path-management has status "ACTIVE"
+    And process path "<run>" in process-path-management has status "ACTIVE"
 
     # --- get: the just-defined path is retrievable by id ---
-    When I get process path "E2E-PROCESS-PATH" from process-path-management
+    When I get process path "<run>" from process-path-management
     Then the response status is 200
     And the process path response match prefix is "e2e-pp"
 
     # --- list: the just-defined path appears in the default (active-only) listing ---
-    Then process-path-management's active process path listing includes "E2E-PROCESS-PATH"
+    Then process-path-management's active process path listing includes "<run>"
 
     # --- revise: matchPrefix/requiredCapabilities change, pathId/direct do not ---
-    When I revise process path "E2E-PROCESS-PATH" to match prefix "e2e-pp-revised" and required capabilities "pick,hazmat" in process-path-management
+    When I revise process path "<run>" to match prefix "e2e-pp-revised" and required capabilities "pick,hazmat" in process-path-management
     Then the response status is 200
     And the process path response match prefix is "e2e-pp-revised"
 
     # --- deactivate: idempotent, publishes ProcessPathDeactivated once ---
-    When I deactivate process path "E2E-PROCESS-PATH" in process-path-management
+    When I deactivate process path "<run>" in process-path-management
     Then the response status is 204
-    And process path "E2E-PROCESS-PATH" in process-path-management has status "DEACTIVATED"
+    And process path "<run>" in process-path-management has status "DEACTIVATED"
 
     # --- deactivating an already-deactivated path is a no-op success ---
-    When I deactivate process path "E2E-PROCESS-PATH" in process-path-management
+    When I deactivate process path "<run>" in process-path-management
     Then the response status is 204
 
     # --- the default (active-only) listing no longer includes it, but the audit view (?all=true) does ---
-    Then process-path-management's active process path listing does not include "E2E-PROCESS-PATH"
-    And process-path-management's full process path listing includes "E2E-PROCESS-PATH"
+    Then process-path-management's active process path listing does not include "<run>"
+    And process-path-management's full process path listing includes "<run>"

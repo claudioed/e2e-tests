@@ -82,6 +82,11 @@ type world struct {
 	// addressing that slot agrees on the same code.
 	disposableSlot string
 
+	// runSuffix is the per-process value that the "<run>" token in a
+	// feature-file identifier expands to (see rs). Resolved lazily and
+	// held for the whole run so every step agrees on it.
+	runSuffix string
+
 	// soak carries state across soak_backlog_ramp.feature's own three
 	// steps (seed pools -> register stations -> run ramp -> print
 	// summary) within a single scenario. Left nil by every other
@@ -164,39 +169,6 @@ func (w *world) opsAgentIsHealthy() error {
 // ---------------------------------------------------------------------
 // facility-layout steps
 // ---------------------------------------------------------------------
-
-func (w *world) registerSite(code, name string) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, facilityBaseURL+"/sites", map[string]any{
-		"siteCode": code, "name": name,
-	}))
-}
-
-func (w *world) registerLocationType(name string, weightKg, volumeM3 float64) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, facilityBaseURL+"/location-types", map[string]any{
-		"name": name,
-		"defaultCapacity": map[string]any{
-			"maxWeightKg": weightKg, "maxVolumeM3": volumeM3,
-		},
-	}))
-}
-
-func (w *world) registerZone(areaCode, zoneCode, siteCode, temperatureClass string) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/sites/%s/zones", facilityBaseURL, siteCode), map[string]any{
-		"areaCode": areaCode, "zoneCode": zoneCode, "temperatureClass": temperatureClass, "hazmat": false,
-	}))
-}
-
-func (w *world) registerAisle(aisleCode, zoneID string, sequenceHint int, direction string) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/zones/%s/aisles", facilityBaseURL, zoneID), map[string]any{
-		"aisleCode": aisleCode, "sequenceHint": sequenceHint, "direction": direction,
-	}))
-}
-
-func (w *world) registerLocationSlot(locationCode, locationType string) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, facilityBaseURL+"/locations", map[string]any{
-		"locationCode": locationCode, "locationType": locationType,
-	}))
-}
 
 // runScopedSlot returns a LocationCode whose BAY segment is unique to this
 // process, e.g. "WH2-STOR-AMB-A01-<bay>-01-A".
@@ -392,6 +364,7 @@ func (w *world) stowEventuallyRejected(qty int, sku, binID string) error {
 // every consumer of this service — including this e2e harness — seeds
 // bins the same way its own unit/integration tests do: a direct insert.
 func (w *world) binExists(binID string, capacity int) error {
+	binID = w.rs(binID)
 	binID = w.resolveSlot(binID)
 	db, err := sql.Open("pgx", inventoryDBURL)
 	if err != nil {
@@ -405,18 +378,22 @@ func (w *world) binExists(binID string, capacity int) error {
 }
 
 func (w *world) receiveStock(qty int, sku string) error {
+	sku = w.rs(sku)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, inventoryBaseURL+"/stock/receive", map[string]any{
 		"sku": sku, "quantity": qty,
 	}))
 }
 
 func (w *world) stowStock(qty int, sku, binID string) error {
+	sku = w.rs(sku)
+	binID = w.rs(binID)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, inventoryBaseURL+"/stock/stow", map[string]any{
 		"sku": sku, "quantity": qty, "binId": binID,
 	}))
 }
 
 func (w *world) usableInventoryIs(sku string, want int) error {
+	sku = w.rs(sku)
 	if err := w.doJSON(http.MethodGet, fmt.Sprintf("%s/inventory/%s/usable", inventoryBaseURL, sku), nil); err != nil {
 		return err
 	}
@@ -441,6 +418,7 @@ func (w *world) usableInventoryIs(sku string, want int) error {
 // ---------------------------------------------------------------------
 
 func (w *world) startAssociateShift(associateID, certification string) error {
+	associateID = w.rs(associateID)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/associates/%s/start-shift", workforceBaseURL, associateID), map[string]any{
 		"certifications": []string{certification},
 	}))
@@ -500,29 +478,46 @@ func (w *world) wesHasWorkPoolFor(pathID string) error {
 	return nil
 }
 
-// wesHasReleaseFedWorkPoolWithWIPLimit seeds a ReleaseFed work pool
-// directly in wes-work-planning's own Postgres database with an explicit,
-// small WIP limit, so a T5 scenario can deterministically saturate it
-// (WIP >= WIPLimit) in two enqueue+release calls instead of needing 1000.
-// Same direct-seed pattern this harness already uses for inventory-storage
-// bins (see binExists) — wes-work-planning has no "create pool with a
-// specific limit" HTTP endpoint; a pool is otherwise always auto
-// -provisioned at its 1000/1000 default on first enqueue.
+// wesHasReleaseFedWorkPoolWithWIPLimit seeds a release-fed pool at a known
+// WIP limit AND clears any work units left in it by an earlier run.
+//
+// The clear is what makes this step's promise true. The scenario's whole
+// point is to saturate a pool with a WIP limit of 1 and observe the
+// ReassignLabor recommendation, so it needs the pool to start EMPTY. Without
+// the delete, a previous run's already-released unit still occupies the only
+// WIP slot, and the release under test fails with 409 wip-limit-reached
+// before the scenario can make its actual assertion — the pool id cannot be
+// run-scoped away here, because "pick-t5-imbalance" is pinned in env.sh's
+// OPS_AGENT_PATH_TARGETS and the ops-agent steps later in this same scenario
+// query that exact path.
+//
+// Seeded directly in Postgres like the bins (see binExists):
+// wes-work-planning has no "create pool with a specific limit" HTTP
+// endpoint, and a pool is otherwise auto-provisioned at its 1000/1000
+// default on first enqueue.
 func (w *world) wesHasReleaseFedWorkPoolWithWIPLimit(pathID string, wipLimit int) error {
 	db, err := sql.Open("pgx", wesDBURL)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	_, err = db.ExecContext(context.Background(),
+	ctx := context.Background()
+	if _, err = db.ExecContext(ctx,
 		`INSERT INTO work_pools (path_id, mode, wip_limit, alarm_threshold)
 		 VALUES ($1, 'ReleaseFed', $2, 0)
 		 ON CONFLICT (path_id) DO UPDATE SET mode = 'ReleaseFed', wip_limit = $2, alarm_threshold = 0`,
-		pathID, wipLimit)
-	return err
+		pathID, wipLimit); err != nil {
+		return err
+	}
+	if _, err = db.ExecContext(ctx, `DELETE FROM work_pool_entries WHERE path_id = $1`, pathID); err != nil {
+		return fmt.Errorf("clearing stale work pool entries for %s: %w", pathID, err)
+	}
+	return nil
 }
 
 func (w *world) enqueueWorkUnit(workUnitID string, hoursFromNow int, reference, pathID string) error {
+	workUnitID = w.rs(workUnitID)
+	reference = w.rs(reference)
 	cpt := time.Now().UTC().Add(time.Duration(hoursFromNow) * time.Hour).Format(time.RFC3339)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/paths/%s/work-units", wesBaseURL, pathID), map[string]any{
 		"workUnitId": workUnitID, "cpt": cpt, "reference": reference,
@@ -534,6 +529,7 @@ func (w *world) releaseWorkFor(pathID string) error {
 }
 
 func (w *world) releasedWorkUnitIs(id string) error {
+	id = w.rs(id)
 	got := w.last.json()
 	if got["id"] != id {
 		return fmt.Errorf("released work unit id = %v, want %q (full body: %s)", got["id"], id, w.last.body)
@@ -569,6 +565,7 @@ func (w *world) wesEventuallyObservesLaborPlan(pathID string, plannedHeads int) 
 // service's own state (fed by the TaskCompleted Kafka consumer) reflects
 // completion, without requiring a new read endpoint.
 func (w *world) wesEventuallyReportsCompleted(workUnitID string) error {
+	workUnitID = w.rs(workUnitID)
 	return eventually(func() error {
 		if err := w.doJSON(http.MethodPost, fmt.Sprintf("%s/work-units/%s/complete", wesBaseURL, workUnitID), nil); err != nil {
 			return err
@@ -613,7 +610,17 @@ func (w *world) wesRebalanceRecommendationIs(pathID, action string) error {
 // fulfillment-execution steps
 // ---------------------------------------------------------------------
 
+// registerStation registers a station with the given capabilities.
+//
+// It deliberately does NOT purge pending tasks. An earlier version did, to
+// stop one scenario claiming another's leftover task, but that raced with
+// the scenarios themselves: flow_balance_exception releases its work BEFORE
+// registering its stations, so the purge deleted the very task the scenario
+// was about to wait for. Cross-scenario interference is handled where it
+// actually occurs instead — see claimNextTaskForOrder, which keeps claiming
+// until it gets the task its own scenario created.
 func (w *world) registerStation(stationID, capabilities string) error {
+	stationID = w.rs(stationID)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, fulfillmentBaseURL+"/stations", map[string]any{
 		"stationId": stationID, "capabilities": strings.Split(capabilities, ","),
 	}))
@@ -627,39 +634,95 @@ func (w *world) registerStation(stationID, capabilities string) error {
 // by labor_performance.feature to give a completed task a real
 // associateId for labor-performance's consumer to score.
 func (w *world) checkInStation(associateID, stationID string) error {
+	associateID = w.rs(associateID)
+	stationID = w.rs(stationID)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/stations/%s/check-in", fulfillmentBaseURL, stationID), map[string]any{
 		"occupantId": associateID,
 	}))
 }
 
-// fulfillmentEventuallyCreatesTaskFor polls the PICK queue depth until it
-// is >= 1, proving the WorkReleased Kafka consumer created a Task. The
-// order ref itself isn't independently queryable pre-claim, so depth > 0
-// is the externally-observable proxy this API offers.
+// fulfillmentEventuallyCreatesTaskFor waits until fulfillment-execution has
+// consumed the WorkReleased event and created the task for THIS order ref.
+//
+// It queries GET /tasks?orderRef= rather than the PICK queue's aggregate
+// depth. Depth was only ever a proxy for "some task arrived", and it stopped
+// being a valid one once scenarios began using run-scoped work unit ids:
+// several scenarios share the PICK queue, so a non-zero depth can be another
+// scenario's leftover task (passing this step while the real one has not
+// arrived), and conversely a depth already drained by a preceding scenario's
+// claim made this step fail even though the awaited task existed. Both were
+// observed -- the failure moved between bootstrap and labor_performance from
+// run to run, which is the signature of a shared-queue race rather than a
+// fixture problem.
 func (w *world) fulfillmentEventuallyCreatesTaskFor(orderRef string) error {
+	orderRef = w.rs(orderRef)
 	return eventually(func() error {
-		if err := w.doJSON(http.MethodGet, fulfillmentBaseURL+"/queues/PICK/depth", nil); err != nil {
+		if err := w.doJSON(http.MethodGet,
+			fmt.Sprintf("%s/tasks?orderRef=%s", fulfillmentBaseURL, orderRef), nil); err != nil {
 			return err
 		}
 		if w.last.status != http.StatusOK {
 			return fmt.Errorf("status %d (body=%s)", w.last.status, w.last.body)
 		}
-		got := w.last.json()
-		depth, _ := toFloat(got["depth"])
-		if depth < 1 {
-			return fmt.Errorf("queue depth = %v, want >= 1", got["depth"])
+		var tasks []map[string]any
+		if err := json.Unmarshal(w.last.body, &tasks); err != nil {
+			return fmt.Errorf("decode tasks for %s: %w (body=%s)", orderRef, err, w.last.body)
+		}
+		if len(tasks) == 0 {
+			return fmt.Errorf("no task yet for orderRef %q", orderRef)
 		}
 		return nil
 	})
 }
 
+// claimNextTask pulls work for the station, skipping past any task that
+// belongs to a DIFFERENT scenario.
+//
+// claim-next is PULL dispatch: the system hands back the earliest-CPT
+// pending task the station is capable of, and the caller cannot ask for a
+// specific one — fulfillment-execution's OpenAPI is explicit that this is
+// intended semantics ("the system — never the caller — selects which task
+// to hand it"), so the harness must accommodate it rather than work around
+// it in the service.
+//
+// Several scenarios in this suite share the PICK queue and run in the same
+// process against the same broker, so a task created by an earlier scenario
+// can still be pending and, being older, is exactly what claim-next returns.
+// Simply claiming once made whichever scenario ran second fail on another
+// scenario's orderRef. This claims repeatedly, completing nothing and
+// leaving each unwanted task leased (its lease expires on its own), until
+// the queue yields a task this station's scenario actually created. That
+// keeps the assertion strict — the scenario still proves ITS task was
+// created and claimable — instead of relaxing it to "some task arrived".
 func (w *world) claimNextTask(stationID, taskType string) error {
-	return w.expectOK2xx(w.doJSON(http.MethodPost, fmt.Sprintf("%s/stations/%s/claim-next", fulfillmentBaseURL, stationID), map[string]any{
-		"taskType": taskType,
-	}))
+	stationID = w.rs(stationID)
+	return w.expectOK2xx(w.doJSON(http.MethodPost,
+		fmt.Sprintf("%s/stations/%s/claim-next", fulfillmentBaseURL, stationID),
+		map[string]any{"taskType": taskType}))
+}
+
+// claimNextTaskForOrder is claimNextTask targeted at a known orderRef: it
+// keeps claiming until it gets that scenario's own task. See claimNextTask
+// for why this is necessary.
+func (w *world) claimNextTaskForOrder(stationID, taskType, orderRef string) error {
+	stationID = w.rs(stationID)
+	orderRef = w.rs(orderRef)
+	return eventually(func() error {
+		if err := w.expectOK2xx(w.doJSON(http.MethodPost,
+			fmt.Sprintf("%s/stations/%s/claim-next", fulfillmentBaseURL, stationID),
+			map[string]any{"taskType": taskType})); err != nil {
+			return err
+		}
+		if got := w.last.json(); got["orderRef"] != orderRef {
+			return fmt.Errorf("claimed another scenario's task %v, still waiting for %q",
+				got["orderRef"], orderRef)
+		}
+		return nil
+	})
 }
 
 func (w *world) claimedTaskIsForOrder(orderRef string) error {
+	orderRef = w.rs(orderRef)
 	got := w.last.json()
 	if got["orderRef"] != orderRef {
 		return fmt.Errorf("claimed task orderRef = %v, want %q (full body: %s)", got["orderRef"], orderRef, w.last.body)
@@ -670,6 +733,7 @@ func (w *world) claimedTaskIsForOrder(orderRef string) error {
 }
 
 func (w *world) completeClaimedTask(stationID string) error {
+	stationID = w.rs(stationID)
 	if w.claimedTaskID == "" {
 		return fmt.Errorf("no task has been claimed yet this scenario")
 	}
@@ -894,6 +958,7 @@ func (w *world) placeOrder(sku string, quantity int, allowPartialShipment bool) 
 // order for N units of SKU "..." allowing ship-complete only in
 // order-management" (allowPartialShipment=false — BR3's default).
 func (w *world) iPlaceAnOrderForUnitsOfSKU(quantity int, sku string) error {
+	sku = w.rs(sku)
 	return w.placeOrder(sku, quantity, false)
 }
 
@@ -985,6 +1050,7 @@ func (w *world) laborDefinesStandard(expectedSeconds int, taskType string) error
 // execution's TaskCompleted event was actually consumed and scored —
 // tolerating 404 while the Kafka consumer catches up.
 func (w *world) laborEventuallyReportsScorecard(associateID string, minTasks int) error {
+	associateID = w.rs(associateID)
 	return eventually(func() error {
 		if err := w.doJSON(http.MethodGet, fmt.Sprintf("%s/associates/%s/scorecard", laborBaseURL, associateID), nil); err != nil {
 			return err
@@ -1017,17 +1083,65 @@ func (w *world) laborEventuallyReportsScorecard(associateID string, minTasks int
 // future scenario once one does.)
 // ---------------------------------------------------------------------
 
+// rs ("run scope") expands the literal token "<run>" in an identifier into
+// a value unique to this test process, so a scenario creates fresh entities
+// on every run instead of colliding with, or accumulating on top of, what
+// an earlier run left in these long-lived databases.
+//
+// Two distinct failure modes made this necessary, both of which read as
+// service bugs rather than exhausted fixture data:
+//
+//   - Hard collisions. process_path_management.feature asserts a STRICT 201
+//     on define and ends by DEACTIVATING the path, which
+//     process-path-management treats as terminal and refuses to resurrect;
+//     the second run got a 409. The strict assertions are the POINT of that
+//     scenario, so the identifier moves rather than the assertions
+//     weakening.
+//
+//   - Silent accumulation, which is worse because it produces a wrong
+//     NUMBER rather than an error: bootstrap.feature receives 20 units of a
+//     fixed SKU and asserts usable inventory is exactly 20, so a second run
+//     saw 40. Scoping the SKU keeps the assertion exact instead of
+//     relaxing it to ">= 20", which would have stopped testing the thing it
+//     exists to test.
+//
+// Identifiers that name genuinely SHARED reference data are deliberately
+// NOT scoped: the facility map (site/zone/aisle/location type) and the
+// process-path catalogue ids like "pick-zone-a" are the fleet's real
+// configuration, and every scenario should agree on them. Those use the
+// idempotent "... exists in ..." steps instead.
+func (w *world) rs(id string) string {
+	if !strings.Contains(id, "<run>") {
+		return id
+	}
+	if w.runSuffix == "" {
+		w.runSuffix = fmt.Sprintf("%d", time.Now().UnixNano()%100000000)
+	}
+	return strings.ReplaceAll(id, "<run>", w.runSuffix)
+}
+
+// resolvePathID is rs with a process-path-shaped default for the bare token.
+func (w *world) resolvePathID(pathID string) string {
+	if !strings.Contains(pathID, "<run>") {
+		return pathID
+	}
+	return w.rs("E2E-PROCESS-PATH-<run>")
+}
+
 func (w *world) definePath(pathID, matchPrefix, capabilities string) error {
+	pathID = w.resolvePathID(pathID)
 	return w.expectOK2xx(w.doJSON(http.MethodPost, processPathBaseURL+"/process-paths", map[string]any{
 		"pathId": pathID, "matchPrefix": matchPrefix, "requiredCapabilities": strings.Split(capabilities, ","),
 	}))
 }
 
 func (w *world) getPath(pathID string) error {
+	pathID = w.resolvePathID(pathID)
 	return w.doJSON(http.MethodGet, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), nil)
 }
 
 func (w *world) pathStatusIs(pathID, want string) error {
+	pathID = w.resolvePathID(pathID)
 	if err := w.getPath(pathID); err != nil {
 		return err
 	}
@@ -1050,12 +1164,14 @@ func (w *world) pathResponseMatchPrefixIs(want string) error {
 }
 
 func (w *world) revisePath(pathID, matchPrefix, capabilities string) error {
+	pathID = w.resolvePathID(pathID)
 	return w.expectOK2xx(w.doJSON(http.MethodPut, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), map[string]any{
 		"matchPrefix": matchPrefix, "requiredCapabilities": strings.Split(capabilities, ","),
 	}))
 }
 
 func (w *world) deactivatePath(pathID string) error {
+	pathID = w.resolvePathID(pathID)
 	return w.doJSON(http.MethodDelete, fmt.Sprintf("%s/process-paths/%s", processPathBaseURL, pathID), nil)
 }
 
@@ -1071,6 +1187,7 @@ func (w *world) listPaths(all bool) error {
 }
 
 func (w *world) activeListingIncludes(pathID string) error {
+	pathID = w.resolvePathID(pathID)
 	if err := w.listPaths(false); err != nil {
 		return err
 	}
@@ -1078,6 +1195,7 @@ func (w *world) activeListingIncludes(pathID string) error {
 }
 
 func (w *world) activeListingDoesNotInclude(pathID string) error {
+	pathID = w.resolvePathID(pathID)
 	if err := w.listPaths(false); err != nil {
 		return err
 	}
@@ -1085,6 +1203,7 @@ func (w *world) activeListingDoesNotInclude(pathID string) error {
 }
 
 func (w *world) fullListingIncludes(pathID string) error {
+	pathID = w.resolvePathID(pathID)
 	if err := w.listPaths(true); err != nil {
 		return err
 	}
@@ -1180,11 +1299,6 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^warehouse-ops-agent is healthy$`, w.opsAgentIsHealthy)
 
 	// facility-layout
-	sc.Step(`^I register site "([^"]*)" named "([^"]*)" in facility-layout$`, w.registerSite)
-	sc.Step(`^I register location type "([^"]*)" with capacity (\d+) kg and ([\d.]+) m3 in facility-layout$`, w.registerLocationType)
-	sc.Step(`^I register zone "([^"]*)"/"([^"]*)" in site "([^"]*)" with temperature class "([^"]*)" in facility-layout$`, w.registerZone)
-	sc.Step(`^I register aisle "([^"]*)" in zone "([^"]*)" with sequence hint (\d+) and direction "([^"]*)" in facility-layout$`, w.registerAisle)
-	sc.Step(`^I register location slot "([^"]*)" of type "([^"]*)" in facility-layout$`, w.registerLocationSlot)
 
 	// inventory-storage
 	sc.Step(`^I decommission location slot "([^"]*)" in facility-layout$`, w.decommissionLocationSlot)
@@ -1227,6 +1341,7 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^associate "([^"]*)" checks into station "([^"]*)" in fulfillment-execution$`, w.checkInStation)
 	sc.Step(`^fulfillment-execution eventually creates a task for order "([^"]*)"$`, w.fulfillmentEventuallyCreatesTaskFor)
 	sc.Step(`^station "([^"]*)" claims the next "([^"]*)" task in fulfillment-execution$`, w.claimNextTask)
+	sc.Step(`^station "([^"]*)" claims the next "([^"]*)" task for order "([^"]*)" in fulfillment-execution$`, w.claimNextTaskForOrder)
 	sc.Step(`^the claimed task is for order "([^"]*)"$`, w.claimedTaskIsForOrder)
 	sc.Step(`^station "([^"]*)" completes the claimed task in fulfillment-execution$`, w.completeClaimedTask)
 	sc.Step(`^the claimed task's lease is forced to have already expired in fulfillment-execution$`, w.claimedTaskLeaseForcedExpired)

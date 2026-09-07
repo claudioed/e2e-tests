@@ -20,19 +20,19 @@ Feature: labor-performance scores a completed task against its engineered standa
     Given labor-performance defines a standard of 60 expected seconds for task type "PICK"
 
     # --- fulfillment-execution: an associate checks in, claims, and completes a PICK task ---
-    Given a station "station-e2e-labor-1" is registered with capabilities "pick" in fulfillment-execution
-    And associate "assoc-e2e-labor-1" checks into station "station-e2e-labor-1" in fulfillment-execution
+    Given a station "station-e2e-labor-<run>" is registered with capabilities "pick" in fulfillment-execution
+    And associate "assoc-e2e-labor-<run>" checks into station "station-e2e-labor-<run>" in fulfillment-execution
     And wes-work-planning has a work pool for process path "pick-zone-a"
-    And I enqueue work unit "wu-e2e-labor-1" with cpt in 1 hour and reference "order-e2e-labor-1" to process path "pick-zone-a" in wes-work-planning
+    And I enqueue work unit "wu-e2e-labor-<run>" with cpt in 1 hour and reference "order-e2e-labor-<run>" to process path "pick-zone-a" in wes-work-planning
     And work is released from process path "pick-zone-a" in wes-work-planning
-    When fulfillment-execution eventually creates a task for order "wu-e2e-labor-1"
-    And station "station-e2e-labor-1" claims the next "PICK" task in fulfillment-execution
-    Then the claimed task is for order "wu-e2e-labor-1"
-    When station "station-e2e-labor-1" completes the claimed task in fulfillment-execution
+    When fulfillment-execution eventually creates a task for order "wu-e2e-labor-<run>"
+    And station "station-e2e-labor-<run>" claims the next "PICK" task for order "wu-e2e-labor-<run>" in fulfillment-execution
+    Then the claimed task is for order "wu-e2e-labor-<run>"
+    When station "station-e2e-labor-<run>" completes the claimed task in fulfillment-execution
 
     # --- labor-performance: the Kafka-consumer proof ---
     # fulfillment-execution publishes TaskCompleted (with associateId
-    # "assoc-e2e-labor-1", best-effort from the check-in above) to
+    # "assoc-e2e-labor-<run>", best-effort from the check-in above) to
     # warehouse.fulfillment.events; labor-performance's consumer scores
     # it against the standard defined above and projects a scorecard.
-    Then labor-performance eventually reports a scorecard for associate "assoc-e2e-labor-1" with at least 1 task scored
+    Then labor-performance eventually reports a scorecard for associate "assoc-e2e-labor-<run>" with at least 1 task scored
