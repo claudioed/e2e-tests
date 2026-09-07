@@ -75,6 +75,13 @@ type world struct {
 	claimedTaskID string
 	orderID       string
 
+	// disposableSlot is the run-scoped LocationCode that
+	// facility_layout_propagation.feature registers and then
+	// decommissions. Resolved lazily from the "<disposable>" token (see
+	// resolveSlot) and held for the rest of the scenario, so every step
+	// addressing that slot agrees on the same code.
+	disposableSlot string
+
 	// soak carries state across soak_backlog_ramp.feature's own three
 	// steps (seed pools -> register stations -> run ramp -> print
 	// summary) within a single scenario. Left nil by every other
@@ -191,9 +198,193 @@ func (w *world) registerLocationSlot(locationCode, locationType string) error {
 	}))
 }
 
+// runScopedSlot returns a LocationCode whose BAY segment is unique to this
+// process, e.g. "WH2-STOR-AMB-A01-<bay>-01-A".
+//
+// This exists for one specific reason: the propagation scenario ends by
+// DECOMMISSIONING a slot, and facility-layout treats a decommissioned
+// LocationCode as a permanently closed record — re-registering it is
+// refused. A fixed code therefore makes the scenario destroy its own
+// precondition and pass exactly once per database, which is worse than a
+// flaky test: the second run fails with a confusing "was never rejected"
+// error that looks like a broken Kafka cache rather than exhausted fixture
+// data. A run-scoped code keeps the scenario genuinely re-runnable against
+// the same long-lived facility-layout database.
+//
+// The bay segment is used (not a suffix on the position) because every
+// segment must match [A-Z0-9] and bay is the natural numeric one.
+func runScopedSlot(zoneID, aisle string) string {
+	bay := fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
+	return fmt.Sprintf("%s-%s-%s-01-A", zoneID, aisle, bay)
+}
+
+// expectOKOr409 accepts a 2xx OR a 409 duplicate. The facility map is
+// reference data whose registration is naturally idempotent-by-intent: "this
+// site/zone/aisle/slot exists" is the goal, and a 409 means it already does.
+// The strict expectOK2xx variants above stay as they are — scenarios that
+// assert on CREATION semantics still need a real 201 — but the setup steps
+// of THIS scenario only need the map to be in a known state, and must not
+// fail merely because the suite has been run before against the same
+// long-lived facility-layout database.
+func (w *world) expectOKOr409(err error) error {
+	if err != nil {
+		return err
+	}
+	if w.last.status == http.StatusConflict {
+		return nil
+	}
+	if w.last.status < 200 || w.last.status >= 300 {
+		return fmt.Errorf("expected 2xx or 409, got %d (body: %s)", w.last.status, w.last.body)
+	}
+	return nil
+}
+
+func (w *world) ensureSite(code, name string) error {
+	return w.expectOKOr409(w.doJSON(http.MethodPost, facilityBaseURL+"/sites", map[string]any{
+		"siteCode": code, "name": name,
+	}))
+}
+
+func (w *world) ensureLocationType(name string, weightKg, volumeM3 float64) error {
+	return w.expectOKOr409(w.doJSON(http.MethodPost, facilityBaseURL+"/location-types", map[string]any{
+		"name": name,
+		"defaultCapacity": map[string]any{
+			"maxWeightKg": weightKg, "maxVolumeM3": volumeM3,
+		},
+	}))
+}
+
+func (w *world) ensureZone(areaCode, zoneCode, siteCode, temperatureClass string, hazmat bool) error {
+	return w.expectOKOr409(w.doJSON(http.MethodPost,
+		fmt.Sprintf("%s/sites/%s/zones", facilityBaseURL, siteCode), map[string]any{
+			"areaCode": areaCode, "zoneCode": zoneCode,
+			"temperatureClass": temperatureClass, "hazmat": hazmat,
+		}))
+}
+
+func (w *world) ensureAmbientZone(areaCode, zoneCode, siteCode, temperatureClass string) error {
+	return w.ensureZone(areaCode, zoneCode, siteCode, temperatureClass, false)
+}
+
+func (w *world) ensureHazmatZone(areaCode, zoneCode, siteCode, temperatureClass string) error {
+	return w.ensureZone(areaCode, zoneCode, siteCode, temperatureClass, true)
+}
+
+func (w *world) ensureAisle(aisleCode, zoneID string, sequenceHint int, direction string) error {
+	return w.expectOKOr409(w.doJSON(http.MethodPost,
+		fmt.Sprintf("%s/zones/%s/aisles", facilityBaseURL, zoneID), map[string]any{
+			"aisleCode": aisleCode, "sequenceHint": sequenceHint, "direction": direction,
+		}))
+}
+
+// ensureLocationSlot registers a slot, tolerating a duplicate. It also
+// tolerates a slot that was DECOMMISSIONED by a previous run of this
+// scenario: re-registering the same code is rejected, so the scenario's
+// final decommission step would otherwise poison every later run.
+func (w *world) ensureLocationSlot(locationCode, locationType string) error {
+	return w.expectOKOr409(w.doJSON(http.MethodPost, facilityBaseURL+"/locations", map[string]any{
+		"locationCode": w.resolveSlot(locationCode), "locationType": locationType,
+	}))
+}
+
+// resolveSlot maps the literal token "<disposable>" in a feature file onto a
+// run-scoped LocationCode (see runScopedSlot), remembering it for the rest of
+// the scenario so later steps address the same slot. Any other value is
+// passed through verbatim.
+func (w *world) resolveSlot(code string) string {
+	if !strings.Contains(code, "<disposable>") {
+		return code
+	}
+	if w.disposableSlot == "" {
+		w.disposableSlot = runScopedSlot("WH2-STOR-AMB", "A01")
+	}
+	return w.disposableSlot
+}
+
+func (w *world) decommissionLocationSlot(locationCode string) error {
+	return w.expectOK2xx(w.doJSON(http.MethodPost,
+		fmt.Sprintf("%s/locations/%s/decommission", facilityBaseURL, w.resolveSlot(locationCode)), nil))
+}
+
 // ---------------------------------------------------------------------
 // inventory-storage steps
 // ---------------------------------------------------------------------
+
+// classifyProduct registers a SKU's ProductClassification. handlingTags is
+// a comma-separated list of the closed HandlingTag vocabulary (e.g.
+// "Hazmat"); inventory-storage is the source of truth for this master data.
+func (w *world) classifyProduct(sku, handlingTags string) error {
+	tags := []string{}
+	for _, t := range strings.Split(handlingTags, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	return w.expectOK2xx(w.doJSON(http.MethodPut,
+		fmt.Sprintf("%s/products/%s/classification", inventoryBaseURL, sku),
+		map[string]any{"handlingTags": tags}))
+}
+
+// stowIsRejected asserts a stow is REFUSED, and specifically by the
+// placement-rule check rather than by any other failure: a 409 whose RFC-7807
+// "type" names the hazmat-zone rule. Asserting the status alone would also
+// pass on an unrelated 409, which would silently hide a broken cache.
+func (w *world) stowIsRejected(qty int, sku, binID string) error {
+	binID = w.resolveSlot(binID)
+	if err := w.doJSON(http.MethodPost, inventoryBaseURL+"/stock/stow", map[string]any{
+		"sku": sku, "quantity": qty, "binId": binID,
+	}); err != nil {
+		return err
+	}
+	if w.last.status != http.StatusConflict {
+		return fmt.Errorf("expected 409 (placement rule violation), got %d (body: %s)",
+			w.last.status, w.last.body)
+	}
+	if !bytes.Contains(w.last.body, []byte("hazmat-zone-required")) {
+		return fmt.Errorf("expected a hazmat-zone-required problem, got body: %s", w.last.body)
+	}
+	return nil
+}
+
+// stowEventuallySucceeds retries a stow until it is accepted or the deadline
+// passes. The retry is the POINT of the step, not incidental flake-hiding:
+// inventory-storage's classification cache is fed asynchronously from
+// facility-layout's Kafka topic, so a slot registered moments ago becomes
+// stowable only once that event has been consumed. An immediate one-shot
+// assertion would be testing the propagation delay, not the behaviour.
+func (w *world) stowEventuallySucceeds(qty int, sku, binID string) error {
+	binID = w.resolveSlot(binID)
+	deadline := time.Now().Add(eventualWaitTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		lastErr = w.expectOK2xx(w.doJSON(http.MethodPost, inventoryBaseURL+"/stock/stow",
+			map[string]any{"sku": sku, "quantity": qty, "binId": binID}))
+		if lastErr == nil {
+			return nil
+		}
+		time.Sleep(eventualWaitPoll)
+	}
+	return fmt.Errorf("stow of %s into %s never succeeded within %s: %w",
+		sku, binID, eventualWaitTimeout, lastErr)
+}
+
+// stowEventuallyRejected is the inverse: retries until the stow is refused by
+// the placement rule, used after registering a hazmat zone (the cache must
+// LEARN the zone's attributes) or after a decommission.
+func (w *world) stowEventuallyRejected(qty int, sku, binID string) error {
+	binID = w.resolveSlot(binID)
+	deadline := time.Now().Add(eventualWaitTimeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		lastErr = w.stowIsRejected(qty, sku, binID)
+		if lastErr == nil {
+			return nil
+		}
+		time.Sleep(eventualWaitPoll)
+	}
+	return fmt.Errorf("stow of %s into %s was never rejected within %s: %w",
+		sku, binID, eventualWaitTimeout, lastErr)
+}
 
 // binExists seeds a Bin directly in inventory-storage's own Postgres
 // database. There is deliberately no "create bin" HTTP endpoint in this
@@ -201,6 +392,7 @@ func (w *world) registerLocationSlot(locationCode, locationType string) error {
 // every consumer of this service — including this e2e harness — seeds
 // bins the same way its own unit/integration tests do: a direct insert.
 func (w *world) binExists(binID string, capacity int) error {
+	binID = w.resolveSlot(binID)
 	db, err := sql.Open("pgx", inventoryDBURL)
 	if err != nil {
 		return err
@@ -995,7 +1187,22 @@ func InitializeScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^I register location slot "([^"]*)" of type "([^"]*)" in facility-layout$`, w.registerLocationSlot)
 
 	// inventory-storage
+	sc.Step(`^I decommission location slot "([^"]*)" in facility-layout$`, w.decommissionLocationSlot)
+
+	// Idempotent "ensure" variants, used by facility_layout_propagation.feature
+	// so it can be re-run against a long-lived facility-layout database.
+	sc.Step(`^site "([^"]*)" named "([^"]*)" exists in facility-layout$`, w.ensureSite)
+	sc.Step(`^location type "([^"]*)" with capacity (\d+) kg and ([\d.]+) m3 exists in facility-layout$`, w.ensureLocationType)
+	sc.Step(`^zone "([^"]*)"/"([^"]*)" in site "([^"]*)" with temperature class "([^"]*)" exists in facility-layout$`, w.ensureAmbientZone)
+	sc.Step(`^hazmat zone "([^"]*)"/"([^"]*)" in site "([^"]*)" with temperature class "([^"]*)" exists in facility-layout$`, w.ensureHazmatZone)
+	sc.Step(`^aisle "([^"]*)" in zone "([^"]*)" with sequence hint (\d+) and direction "([^"]*)" exists in facility-layout$`, w.ensureAisle)
+	sc.Step(`^location slot "([^"]*)" of type "([^"]*)" exists in facility-layout$`, w.ensureLocationSlot)
+
 	sc.Step(`^a Bin "([^"]*)" with capacity (\d+) exists in inventory-storage$`, w.binExists)
+	sc.Step(`^SKU "([^"]*)" is classified with handling tags "([^"]*)" in inventory-storage$`, w.classifyProduct)
+	sc.Step(`^stowing (\d+) units of SKU "([^"]*)" into bin "([^"]*)" in inventory-storage is rejected$`, w.stowIsRejected)
+	sc.Step(`^stowing (\d+) units of SKU "([^"]*)" into bin "([^"]*)" in inventory-storage eventually succeeds$`, w.stowEventuallySucceeds)
+	sc.Step(`^stowing (\d+) units of SKU "([^"]*)" into bin "([^"]*)" in inventory-storage is eventually rejected$`, w.stowEventuallyRejected)
 	sc.Step(`^I receive (\d+) units of SKU "([^"]*)" in inventory-storage$`, w.receiveStock)
 	sc.Step(`^I stow (\d+) units of SKU "([^"]*)" into bin "([^"]*)" in inventory-storage$`, w.stowStock)
 	sc.Step(`^the usable inventory for SKU "([^"]*)" in inventory-storage is (\d+)$`, w.usableInventoryIs)

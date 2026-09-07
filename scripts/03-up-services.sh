@@ -12,9 +12,20 @@
 #                           warehouse-infra's deploy_process_path_kafka_source
 #                           Terraform variable for the equivalent live-
 #                           cluster toggle)
-#   2. facility-layout   — no deps (Open Host Service for the warehouse map)
-#   3. inventory-storage — calls facility-layout over HTTP for hazmat/
-#                           temperature placement checks (LOCATION_LOOKUP_MODE=http)
+#   2. facility-layout   — no deps (Open Host Service for the warehouse map).
+#                           Runs with EVENT_PUBLISHER=kafka so its Published
+#                           Language actually reaches
+#                           warehouse.facility.events — without that the
+#                           topic is never created and inventory-storage's
+#                           cache below has nothing to replay.
+#   3. inventory-storage — maintains a LOCAL CACHE of facility-layout's
+#                           location classifications, fed by that topic
+#                           (LOCATION_LOOKUP_MODE=kafka, inventory-storage
+#                           ADR-0013), instead of calling facility-layout
+#                           over HTTP on every stow. FACILITY_LAYOUT_BASE_URL
+#                           is still exported so a local run can be flipped
+#                           back to LOCATION_LOOKUP_MODE=http (the rollback)
+#                           by changing one word.
 #   4. wes-work-planning — calls inventory-storage over HTTP for product
 #                           classification (PRODUCT_CLASSIFICATION_MODE=http),
 #                           consumes workforce/inventory/fulfillment/order-management Kafka topics
@@ -72,6 +83,8 @@ start_service facility "${BIN_DIR}/facility" \
   HTTP_ADDR=":${FACILITY_HTTP_PORT}" \
   DATABASE_URL="${FACILITY_DB_URL}" \
   MIGRATIONS_PATH="${FACILITY_REPO}/migrations" \
+  EVENT_PUBLISHER=kafka \
+  KAFKA_BROKERS="${KAFKA_BROKERS}" \
   LOG_LEVEL=info
 wait_for_http "${FACILITY_BASE_URL}/healthz"
 
@@ -82,7 +95,7 @@ start_service inventory "${BIN_DIR}/inventory" \
   MIGRATIONS_PATH="${INVENTORY_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
-  LOCATION_LOOKUP_MODE=http \
+  LOCATION_LOOKUP_MODE=kafka \
   FACILITY_LAYOUT_BASE_URL="${FACILITY_BASE_URL}" \
   LOG_LEVEL=info
 wait_for_http "${INVENTORY_BASE_URL}/healthz"
@@ -91,6 +104,7 @@ log "starting wes-work-planning on ${WES_BASE_URL}"
 start_service wes "${BIN_DIR}/wes" \
   HTTP_ADDR=":${WES_HTTP_PORT}" \
   DATABASE_URL="${WES_DB_URL}" \
+  MIGRATIONS_PATH="${WES_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
   PRODUCT_CLASSIFICATION_MODE=http \

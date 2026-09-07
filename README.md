@@ -58,7 +58,6 @@ one under the same parent directory.
 ```bash
 cd e2e-tests
 bash scripts/02-up-infra.sh      # Postgres (this repo) + shared Kafka
-bash scripts/02b-migrate-wes.sh  # wes-work-planning has no self-migrate step
 bash scripts/01-build.sh         # builds all 12 binaries (6 HTTP + 5 MCP + ops-agent)
 bash scripts/03-up-services.sh   # starts all 12 as background processes
 bash scripts/04-run-tests.sh     # runs the default godog suite (excludes @soak)
@@ -118,10 +117,12 @@ here, which proves a single deterministic unit of work flows correctly.
   `start_service_in` with their CWD set to that repo's root; every other
   service reads `MIGRATIONS_PATH` from the environment and runs fine from
   this harness's own CWD.
-- `order-management` self-migrates on startup (same as facility-layout,
-  inventory-storage, fulfillment-execution, and workforce-management) via
-  `postgres.RunMigrations` inside its own `main()` — no separate migrate
-  script is needed for it, unlike wes-work-planning (`02b-migrate-wes.sh`).
+- EVERY service self-migrates on startup via `postgres.RunMigrations` /
+  `postgres.Migrate` inside its own `main()`, so no separate migrate step
+  is needed for any of them. `wes-work-planning` used to be the sole
+  exception and needed a `02b-migrate-wes.sh` workaround; it now migrates
+  itself like the rest (wes-work-planning PR #52), and that script has
+  been removed.
 
 ## CI
 
