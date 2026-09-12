@@ -189,5 +189,29 @@ LABOR_DB_URL="postgres://labor:labor@localhost:5448/labor?sslmode=disable"
 #      harness does not start its own broker -- see scripts/02-up-infra.sh.
 KAFKA_BROKERS="localhost:9092"
 
+# ---- Kafka consumer-group isolation --------------------------------
+# Consumer-group offsets are SHARED infrastructure state, not per-process
+# state. Because the broker above is the same one the warehouse-infra kind
+# cluster runs, a harness binary using its service's default group id joins
+# the SAME group as that service's live in-cluster Deployment. With one
+# partition per topic, Kafka's rebalance protocol awards the partition to
+# exactly ONE member -- and the live pod usually wins, leaving the harness
+# process healthy but consuming nothing. Scenarios then fail as "condition
+# not met within 30s" on a projection that never arrives, which reads like a
+# service bug and is not one.
+#
+# Confirmed concretely: kafka-consumer-groups.sh --describe showed the
+# in-cluster wes/fulfillment/labor pods holding every partition of the groups
+# this harness needs.
+#
+# A per-run suffix gives each harness process its own group, so it replays
+# the topics itself instead of competing for them. This does NOT change how
+# the services behave in the cluster, where sharing one group per service is
+# exactly right.
+E2E_CONSUMER_GROUP_SUFFIX="e2e-$$-$(date +%s)"
+WES_CONSUMER_GROUP="wes-work-planning-${E2E_CONSUMER_GROUP_SUFFIX}"
+FULFILLMENT_CONSUMER_GROUP="fulfillment-execution-${E2E_CONSUMER_GROUP_SUFFIX}"
+LABOR_CONSUMER_GROUP="labor-performance-${E2E_CONSUMER_GROUP_SUFFIX}"
+
 # ---- misc -----------------------------------------------------------
 HEALTH_TIMEOUT_SECS=60
