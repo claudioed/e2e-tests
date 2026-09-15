@@ -72,6 +72,7 @@ log "starting process-path-management on ${PROCESS_PATH_BASE_URL}"
 start_service process-path "${BIN_DIR}/process-path" \
   HTTP_ADDR=":${PROCESS_PATH_HTTP_PORT}" \
   DATABASE_URL="${PROCESS_PATH_DB_URL}" \
+  PGPASSWORD="process_path" \
   MIGRATIONS_PATH="${PROCESS_PATH_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -82,6 +83,7 @@ log "starting facility-layout on ${FACILITY_BASE_URL}"
 start_service facility "${BIN_DIR}/facility" \
   HTTP_ADDR=":${FACILITY_HTTP_PORT}" \
   DATABASE_URL="${FACILITY_DB_URL}" \
+  PGPASSWORD="facility" \
   MIGRATIONS_PATH="${FACILITY_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -92,6 +94,7 @@ log "starting inventory-storage on ${INVENTORY_BASE_URL}"
 start_service inventory "${BIN_DIR}/inventory" \
   HTTP_ADDR=":${INVENTORY_HTTP_PORT}" \
   DATABASE_URL="${INVENTORY_DB_URL}" \
+  PGPASSWORD="inventory" \
   MIGRATIONS_PATH="${INVENTORY_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -104,6 +107,7 @@ log "starting wes-work-planning on ${WES_BASE_URL}"
 start_service wes "${BIN_DIR}/wes" \
   HTTP_ADDR=":${WES_HTTP_PORT}" \
   DATABASE_URL="${WES_DB_URL}" \
+  PGPASSWORD="wes" \
   MIGRATIONS_PATH="${WES_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -122,6 +126,7 @@ log "starting fulfillment-execution on ${FULFILLMENT_BASE_URL}"
 start_service_in execution "${FULFILLMENT_REPO}" "${BIN_DIR}/execution" \
   HTTP_ADDR=":${FULFILLMENT_HTTP_PORT}" \
   DATABASE_URL="${FULFILLMENT_DB_URL}" \
+  PGPASSWORD="fulfillment" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
   WORK_RELEASED_CONSUMER_GROUP="${FULFILLMENT_CONSUMER_GROUP}" \
@@ -141,6 +146,7 @@ log "starting labor-performance on ${LABOR_BASE_URL}"
 start_service labor "${BIN_DIR}/labor" \
   HTTP_ADDR=":${LABOR_HTTP_PORT}" \
   DATABASE_URL="${LABOR_DB_URL}" \
+  PGPASSWORD="labor" \
   MIGRATIONS_PATH="${LABOR_REPO}/migrations" \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
   KAFKA_CONSUMER_GROUP="${LABOR_CONSUMER_GROUP}" \
@@ -151,6 +157,7 @@ log "starting workforce-management on ${WORKFORCE_BASE_URL}"
 start_service workforce "${BIN_DIR}/workforce" \
   HTTP_ADDR=":${WORKFORCE_HTTP_PORT}" \
   DATABASE_URL="${WORKFORCE_DB_URL}" \
+  PGPASSWORD="workforce" \
   MIGRATIONS_PATH="${WORKFORCE_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -174,6 +181,7 @@ log "starting order-management on ${ORDER_BASE_URL}"
 start_service order "${BIN_DIR}/order" \
   HTTP_ADDR=":${ORDER_HTTP_PORT}" \
   DATABASE_URL="${ORDER_DB_URL}" \
+  PGPASSWORD="order" \
   MIGRATIONS_PATH="${ORDER_REPO}/migrations" \
   EVENT_PUBLISHER=kafka \
   KAFKA_BROKERS="${KAFKA_BROKERS}" \
@@ -203,6 +211,7 @@ log "starting facility-layout MCP server on :${FACILITY_MCP_PORT}"
 start_service facility-mcp "${BIN_DIR}/facility-mcp" \
   MCP_ADDR=":${FACILITY_MCP_PORT}" \
   DATABASE_URL="${FACILITY_DB_URL}" \
+  PGPASSWORD="facility" \
   MIGRATIONS_PATH="${FACILITY_REPO}/migrations" \
   MCP_READ_KEY="${FACILITY_MCP_READ_KEY}" \
   LOG_LEVEL=info
@@ -212,6 +221,7 @@ log "starting inventory-storage MCP server on :${INVENTORY_MCP_PORT}"
 start_service inventory-mcp "${BIN_DIR}/inventory-mcp" \
   MCP_ADDR=":${INVENTORY_MCP_PORT}" \
   DATABASE_URL="${INVENTORY_DB_URL}" \
+  PGPASSWORD="inventory" \
   MIGRATIONS_PATH="${INVENTORY_REPO}/migrations" \
   MCP_READ_KEY="${INVENTORY_MCP_READ_KEY}" \
   LOG_LEVEL=info
@@ -221,6 +231,7 @@ log "starting wes-work-planning MCP server on :${WES_MCP_PORT}"
 start_service wes-mcp "${BIN_DIR}/wes-mcp" \
   MCP_ADDR=":${WES_MCP_PORT}" \
   DATABASE_URL="${WES_DB_URL}" \
+  PGPASSWORD="wes" \
   MCP_READ_KEY="${WES_MCP_READ_KEY}" \
   LOG_LEVEL=info
 wait_for_tcp localhost "${WES_MCP_PORT}"
@@ -231,6 +242,7 @@ log "starting fulfillment-execution MCP server on :${FULFILLMENT_MCP_PORT}"
 start_service_in execution-mcp "${FULFILLMENT_REPO}" "${BIN_DIR}/execution-mcp" \
   MCP_ADDR=":${FULFILLMENT_MCP_PORT}" \
   DATABASE_URL="${FULFILLMENT_DB_URL}" \
+  PGPASSWORD="fulfillment" \
   MCP_READ_KEY="${FULFILLMENT_MCP_READ_KEY}" \
   LOG_LEVEL=info
 wait_for_tcp localhost "${FULFILLMENT_MCP_PORT}"
@@ -239,6 +251,7 @@ log "starting workforce-management MCP server on :${WORKFORCE_MCP_PORT}"
 start_service workforce-mcp "${BIN_DIR}/workforce-mcp" \
   MCP_ADDR=":${WORKFORCE_MCP_PORT}" \
   DATABASE_URL="${WORKFORCE_DB_URL}" \
+  PGPASSWORD="workforce" \
   MIGRATIONS_PATH="${WORKFORCE_REPO}/migrations" \
   MCP_READ_KEY="${WORKFORCE_MCP_READ_KEY}" \
   LOG_LEVEL=info
@@ -257,6 +270,7 @@ log "starting labor-performance MCP server on :${LABOR_MCP_PORT}"
 start_service labor-mcp "${BIN_DIR}/labor-mcp" \
   MCP_ADDR=":${LABOR_MCP_PORT}" \
   DATABASE_URL="${LABOR_DB_URL}" \
+  PGPASSWORD="labor" \
   MIGRATIONS_PATH="${LABOR_REPO}/migrations" \
   MCP_READ_KEY="${LABOR_MCP_READ_KEY}" \
   LOG_LEVEL=info
@@ -270,6 +284,7 @@ log "starting order-management MCP server on :${ORDER_MCP_PORT}"
 start_service order-mcp "${BIN_DIR}/order-mcp" \
   MCP_ADDR=":${ORDER_MCP_PORT}" \
   DATABASE_URL="${ORDER_DB_URL}" \
+  PGPASSWORD="order" \
   MIGRATIONS_PATH="${ORDER_REPO}/migrations" \
   MCP_READ_KEY="${ORDER_MCP_READ_KEY}" \
   LOG_LEVEL=info

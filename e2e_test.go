@@ -20,7 +20,8 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // ---------------------------------------------------------------------
@@ -37,21 +38,44 @@ func envOrDefault(key, def string) string {
 }
 
 var (
-	facilityBaseURL     = envOrDefault("FACILITY_BASE_URL", "http://localhost:8081")
-	inventoryBaseURL    = envOrDefault("INVENTORY_BASE_URL", "http://localhost:8082")
-	wesBaseURL          = envOrDefault("WES_BASE_URL", "http://localhost:8083")
-	fulfillmentBaseURL  = envOrDefault("FULFILLMENT_BASE_URL", "http://localhost:8084")
-	workforceBaseURL    = envOrDefault("WORKFORCE_BASE_URL", "http://localhost:8085")
-	opsAgentBaseURL     = envOrDefault("OPS_AGENT_BASE_URL", "http://localhost:8096")
-	orderBaseURL        = envOrDefault("ORDER_BASE_URL", "http://localhost:8086")
-	processPathBaseURL  = envOrDefault("PROCESS_PATH_BASE_URL", "http://localhost:8087")
-	laborBaseURL        = envOrDefault("LABOR_BASE_URL", "http://localhost:8088")
-	inventoryDBURL      = envOrDefault("INVENTORY_DB_URL", "postgres://inventory:***@localhost:5442/inventory?sslmode=disable")
-	wesDBURL            = envOrDefault("WES_DB_URL", "postgres://wes:***@localhost:5443/wes?sslmode=disable")
-	fulfillmentDBURL    = envOrDefault("FULFILLMENT_DB_URL", "postgres://fulfillment:***@localhost:5444/fulfillment_execution?sslmode=disable")
-	eventualWaitTimeout = 30 * time.Second
-	eventualWaitPoll    = 500 * time.Millisecond
+	facilityBaseURL    = envOrDefault("FACILITY_BASE_URL", "http://localhost:8081")
+	inventoryBaseURL   = envOrDefault("INVENTORY_BASE_URL", "http://localhost:8082")
+	wesBaseURL         = envOrDefault("WES_BASE_URL", "http://localhost:8083")
+	fulfillmentBaseURL = envOrDefault("FULFILLMENT_BASE_URL", "http://localhost:8084")
+	workforceBaseURL   = envOrDefault("WORKFORCE_BASE_URL", "http://localhost:8085")
+	opsAgentBaseURL    = envOrDefault("OPS_AGENT_BASE_URL", "http://localhost:8096")
+	orderBaseURL       = envOrDefault("ORDER_BASE_URL", "http://localhost:8086")
+	processPathBaseURL = envOrDefault("PROCESS_PATH_BASE_URL", "http://localhost:8087")
+	laborBaseURL       = envOrDefault("LABOR_BASE_URL", "http://localhost:8088")
+	inventoryDBURL     = envOrDefault("INVENTORY_DB_URL", "postgres://inventory@localhost:5442/inventory?sslmode=disable")
+	wesDBURL           = envOrDefault("WES_DB_URL", "postgres://wes@localhost:5443/wes?sslmode=disable")
+	fulfillmentDBURL   = envOrDefault("FULFILLMENT_DB_URL", "postgres://fulfillment@localhost:5444/fulfillment_execution?sslmode=disable")
+	// This harness's own docker-compose.yml sets each service's Postgres
+	// password equal to its own username (facility/facility,
+	// inventory/inventory, ...) -- see env.sh's DB_URL comment for why
+	// the password is never embedded in the URL itself. Overridable via
+	// env for anyone running this harness against different local
+	// credentials.
+	inventoryDBPassword   = envOrDefault("INVENTORY_DB_PASSWORD", "inventory")
+	wesDBPassword         = envOrDefault("WES_DB_PASSWORD", "wes")
+	fulfillmentDBPassword = envOrDefault("FULFILLMENT_DB_PASSWORD", "fulfillment")
+	eventualWaitTimeout   = 30 * time.Second
+	eventualWaitPoll      = 500 * time.Millisecond
 )
+
+// dbOpen opens a *sql.DB for dsn with password filled in explicitly via
+// pgx's own config (rather than the process-global PGPASSWORD env var),
+// since this one test binary talks to three different Postgres databases
+// with three different passwords in the same process and PGPASSWORD can
+// only ever hold one value at a time.
+func dbOpen(dsn, password string) (*sql.DB, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	cfg.Password = password
+	return stdlib.OpenDB(*cfg), nil
+}
 
 // httpResult captures the last HTTP call this scenario made, so later
 // steps ("Then the response status is 201") can assert on it.
@@ -366,7 +390,7 @@ func (w *world) stowEventuallyRejected(qty int, sku, binID string) error {
 func (w *world) binExists(binID string, capacity int) error {
 	binID = w.rs(binID)
 	binID = w.resolveSlot(binID)
-	db, err := sql.Open("pgx", inventoryDBURL)
+	db, err := dbOpen(inventoryDBURL, inventoryDBPassword)
 	if err != nil {
 		return err
 	}
@@ -496,7 +520,7 @@ func (w *world) wesHasWorkPoolFor(pathID string) error {
 // endpoint, and a pool is otherwise auto-provisioned at its 1000/1000
 // default on first enqueue.
 func (w *world) wesHasReleaseFedWorkPoolWithWIPLimit(pathID string, wipLimit int) error {
-	db, err := sql.Open("pgx", wesDBURL)
+	db, err := dbOpen(wesDBURL, wesDBPassword)
 	if err != nil {
 		return err
 	}
@@ -757,7 +781,7 @@ func (w *world) claimedTaskLeaseForcedExpired() error {
 	if w.claimedTaskID == "" {
 		return fmt.Errorf("no task has been claimed yet this scenario")
 	}
-	db, err := sql.Open("pgx", fulfillmentDBURL)
+	db, err := dbOpen(fulfillmentDBURL, fulfillmentDBPassword)
 	if err != nil {
 		return err
 	}
