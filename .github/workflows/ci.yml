@@ -40,12 +40,13 @@ jobs:
       - name: Vet and compile test binary
         run: |
           set -euo pipefail
-          # NOTE: this repo's only Go file is e2e_test.go (package main,
-          # *_test.go suffix). `go build ./...` reports "no packages to
-          # build" for a dir containing only _test.go files (test files
-          # aren't build targets), so `go build` is not a meaningful check
-          # here. `go vet ./...` and `go test -c` (compile without running)
-          # both do include test files and are the correct compile-check.
+          # NOTE: this repo has no buildable non-test package — its Go
+          # files (e2e_test.go, soak_test.go; package main, TestMain) are
+          # a pure godog black-box test harness, not a binary. `go build
+          # ./...` therefore always fails with "no packages to build" and
+          # is not a meaningful check here. `go vet ./...` already
+          # type-checks _test.go files; `go test -c` is the real
+          # compile-check equivalent of "go build" for a test-only module.
           go vet ./...
           go test -c -o /dev/null ./...
 
