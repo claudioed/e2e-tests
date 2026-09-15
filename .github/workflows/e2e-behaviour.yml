@@ -148,7 +148,29 @@ jobs:
 
       - name: Build the 6 core service binaries
         working-directory: e2e-tests
-        run: bash scripts/01-build.sh 2>&1 | grep -v '^building.*process-path\|^building.*labor\|^building.*MCP\|^building warehouse-ops-agent' || true
+        run: |
+          set -euo pipefail
+          source env.sh
+          mkdir -p "${BIN_DIR}"
+
+          build_one() {
+            local name="$1" repo="$2" cmd_pkg="$3"
+            echo "==> go build ${name} (${repo}/cmd/${cmd_pkg})"
+            ( cd "${repo}" && CGO_ENABLED=0 go build -o "${BIN_DIR}/${name}" "./cmd/${cmd_pkg}" )
+            echo "  OK   ${name} -> ${BIN_DIR}/${name}"
+          }
+
+          # Deliberately only the 6 services bootstrap.feature needs (see
+          # allServicesAreHealthy in e2e_test.go) -- NOT scripts/01-build.sh
+          # verbatim, since that script unconditionally also builds
+          # process-path-management/labor-performance/warehouse-ops-agent
+          # and every MCP server, none of which this job checks out.
+          build_one facility   "${FACILITY_REPO}"    facility
+          build_one inventory  "${INVENTORY_REPO}"   inventory
+          build_one wes        "${WES_REPO}"         wes
+          build_one execution  "${FULFILLMENT_REPO}" execution
+          build_one workforce  "${WORKFORCE_REPO}"   workforce
+          build_one order      "${ORDER_REPO}"       order
         continue-on-error: false
 
       - name: Start the 6 core services and run bootstrap.feature
