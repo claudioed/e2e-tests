@@ -135,6 +135,62 @@ jobs:
           echo "::error::kafka never became reachable on localhost:9092"
           exit 1
 
+      - name: Pre-create every topic the 6 core services publish to
+        run: |
+          set -euo pipefail
+          # KAFKA_AUTO_CREATE_TOPICS_ENABLE=true is not reliable enough on
+          # a single-node KRaft broker that just booted: the FIRST publish
+          # from a freshly-started service can race the broker's own
+          # metadata propagation and fail with "Unknown Topic Or
+          # Partition" (confirmed for real on run 34921874416 -- this
+          # workflow's first genuinely-past-startup run). Creating every
+          # topic explicitly up front, then confirming each one has an
+          # assigned partition leader, removes that race entirely. Topic
+          # list is the real, complete set every one of the 6 checked-out
+          # services' own source publishes to (grepped from each repo's
+          # internal/ for the literal "warehouse.*" topic-name strings),
+          # not a guess.
+          kafka_container="$(docker ps --filter ancestor=apache/kafka:3.8.0 --format '{{.ID}}' | head -1)"
+          if [[ -z "${kafka_container}" ]]; then
+            echo "::error::could not find the running apache/kafka container"
+            exit 1
+          fi
+          topics=(
+            warehouse.facility.events
+            warehouse.facility.analytics
+            warehouse.inventory.events
+            warehouse.inventory.analytics
+            warehouse.work-planning.events
+            warehouse.wes.analytics
+            warehouse.fulfillment.events
+            warehouse.fulfillment.analytics
+            warehouse.workforce.events
+            warehouse.workforce.analytics
+            warehouse.order-management.events
+            warehouse.order-management.analytics
+          )
+          for t in "${topics[@]}"; do
+            docker exec "${kafka_container}" /opt/kafka/bin/kafka-topics.sh \
+              --bootstrap-server localhost:9092 --create --if-not-exists \
+              --topic "${t}" --partitions 1 --replication-factor 1
+          done
+          echo "waiting for every topic to have an assigned partition leader"
+          for t in "${topics[@]}"; do
+            deadline=$((SECONDS + 30))
+            while true; do
+              leader="$(docker exec "${kafka_container}" /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:9092 --describe --topic "${t}" 2>/dev/null \
+                | grep -oE 'Leader: [0-9]+' | head -1 || true)"
+              [[ -n "${leader}" ]] && break
+              if (( SECONDS > deadline )); then
+                echo "::error::${t} never got an assigned partition leader"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+          echo "all topics ready"
+
       - name: Start per-service Postgres instances
         working-directory: e2e-tests
         run: |
