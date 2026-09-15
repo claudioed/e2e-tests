@@ -109,6 +109,16 @@ jobs:
           ref: develop
           path: order-management
 
+      - name: Checkout warehouse-infra (config only -- process-path catalogue)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: claudioed/warehouse-infra
+          ref: develop
+          path: warehouse-infra
+          sparse-checkout: |
+            config/process-paths
+          sparse-checkout-cone-mode: false
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: e2e-tests/go.mod
