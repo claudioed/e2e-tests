@@ -165,23 +165,23 @@ LABOR_PERFORMANCE_REPORTS_REST_URL="${LABOR_REPORTS_BASE_URL}"
 OPS_AGENT_PATH_TARGETS='[{"siteCode":"WH1","pathId":"pick-t5-imbalance","processPath":"PICK","buildingId":"wh1","shiftId":"shift-t5"}]'
 
 # ---- Postgres (docker-compose.yml in this directory) --------------
-FACILITY_DB_URL="postgres://facility:facility@localhost:5441/facility?sslmode=disable"
-INVENTORY_DB_URL="postgres://inventory:inventory@localhost:5442/inventory?sslmode=disable"
-WES_DB_URL="postgres://wes:wes@localhost:5443/wes?sslmode=disable"
-FULFILLMENT_DB_URL="postgres://fulfillment:fulfillment@localhost:5444/fulfillment_execution?sslmode=disable"
-WORKFORCE_DB_URL="postgres://workforce:workforce@localhost:5445/workforce?sslmode=disable"
+FACILITY_DB_URL="postgres://facility@localhost:5441/facility?sslmode=disable"
+INVENTORY_DB_URL="postgres://inventory@localhost:5442/inventory?sslmode=disable"
+WES_DB_URL="postgres://wes@localhost:5443/wes?sslmode=disable"
+FULFILLMENT_DB_URL="postgres://fulfillment@localhost:5444/fulfillment_execution?sslmode=disable"
+WORKFORCE_DB_URL="postgres://workforce@localhost:5445/workforce?sslmode=disable"
 # order-management's own docker-compose.yml defaults to host port 5434 —
 # this harness's own e2e-specific offset continues past workforce's :5445
 # (avoiding both the 5441-5445 range already in use here AND order-
 # management's own :5434 default, per this file's own port-offset
 # convention documented in docker-compose.yml's header comment).
-ORDER_DB_URL="postgres://order:order@localhost:5446/order?sslmode=disable"
+ORDER_DB_URL="postgres://order@localhost:5446/order?sslmode=disable"
 # process-path-management (8th bounded context) — next free slot after
 # order-management's :5446.
-PROCESS_PATH_DB_URL="postgres://process_path:process_path@localhost:5447/process_path?sslmode=disable"
+PROCESS_PATH_DB_URL="postgres://process_path@localhost:5447/process_path?sslmode=disable"
 # labor-performance (7th bounded context) — next free slot after
 # process-path-management's :5447.
-LABOR_DB_URL="postgres://labor:labor@localhost:5448/labor?sslmode=disable"
+LABOR_DB_URL="postgres://labor@localhost:5448/labor?sslmode=disable"
 
 # ---- Kafka: single broker platform-wide, owned by the warehouse-infra
 #      kind cluster and exposed to the host at localhost:9092 via a
